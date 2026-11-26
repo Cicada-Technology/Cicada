@@ -33,7 +33,7 @@ L3 能力：认证——身份解析、凭据校验、会话与令牌的生命�
 `CaptchaService` / `CaptchaParams` / `CaptchaStore`、
 `Identity` / `IdentityType` / `IdentityVerifier` / `StaticCodeVerifier` / `RejectAllVerifier` /
 `bind_identity` / `unbind_identity` / `list_identities`、`TotpSetup` / `generate_totp_setup` / `verify_totp`、
-`OAuthService` / `OAuthClient` / `HttpOAuthClient` / `ExternalIdentity` / `ProviderKind` /
+`OAuthService` / `OAuthClient` / `OAuthClientKind` / `HttpOAuthClient` / `ExternalIdentity` / `ProviderKind` /
 `authorize_url` / `redirect_uri`、`AuthError`。
 
 ## 依赖

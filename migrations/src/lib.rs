@@ -19,6 +19,8 @@ mod m20261017_000014_sys_user_online;
 mod m20261017_000015_trgm_indexes;
 mod m20261019_000017_oper_log_context;
 mod m20261020_000018_menu_refresh;
+mod m20261126_000019_remove_form_builder_menu;
+mod m20261126_000020_add_reachable_menus;
 
 pub mod init_admin;
 pub mod seed;
@@ -69,6 +71,8 @@ pub fn framework_migrations() -> Vec<Box<dyn MigrationTrait>> {
         Box::new(m20261017_000015_trgm_indexes::Migration),
         Box::new(m20261019_000017_oper_log_context::Migration),
         Box::new(m20261020_000018_menu_refresh::Migration),
+        Box::new(m20261126_000019_remove_form_builder_menu::Migration),
+        Box::new(m20261126_000020_add_reachable_menus::Migration),
     ]
 }
 

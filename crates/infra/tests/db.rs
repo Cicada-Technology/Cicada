@@ -10,7 +10,7 @@ use tracing_subscriber::prelude::*;
 
 fn url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://cicada:2025%40hanmole@localhost:5432/cicada".to_string())
+        .unwrap_or_else(|_| "postgres://cicada:2026%40cicada@localhost:5432/cicada".to_string())
 }
 
 fn cfg(slow_query_ms: u64) -> DbConfig {

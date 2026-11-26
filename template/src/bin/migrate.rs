@@ -27,11 +27,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
         "up" => {
             app_migrations::Migrator::up(db.conn(), None).await?;
-            if args.iter().any(|a| a == "--seed" || a == "--admin") {
-                migrations::seed::seed(db.conn()).await?;
-            }
+            // 先建默认租户/管理员，再跑种子：演示部门、套餐归属要能更新到这条 admin 记录；
+            // 种子里的菜单授权同步也会在角色已存在时生效。
             if args.iter().any(|a| a == "--admin") {
                 migrations::init_admin::init_admin(db.conn()).await?;
+            }
+            if args.iter().any(|a| a == "--seed" || a == "--admin") {
+                migrations::seed::seed(db.conn()).await?;
             }
             println!("迁移完成");
         }

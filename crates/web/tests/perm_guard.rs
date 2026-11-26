@@ -33,7 +33,7 @@ async fn guarded() -> &'static str {
 
 async fn state() -> AppState {
     let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://cicada:2025%40hanmole@localhost:5432/cicada".to_string());
+        .unwrap_or_else(|_| "postgres://cicada:2026%40cicada@localhost:5432/cicada".to_string());
     let db = Db::connect(&DbConfig {
         url: Secret::new(url),
         max_connections: 2,

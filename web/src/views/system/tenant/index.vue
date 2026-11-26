@@ -71,6 +71,8 @@ const form = reactive({
   status: STATUS_ENABLED,
   package_id: null as number | null,
   remark: '',
+  admin_username: '',
+  admin_password: '',
 });
 
 const fields = computed<AppFormField[]>(() => [
@@ -93,6 +95,23 @@ const fields = computed<AppFormField[]>(() => [
     options: STATUS_OPTIONS.map((item) => ({ value: item.value, label: item.label })),
   },
   { prop: 'remark', label: t('common.remark'), type: 'textarea' },
+  ...(editingId.value === null
+    ? ([
+        {
+          prop: 'admin_username',
+          label: '管理员账号',
+          required: true,
+          tips: '租户创建后用它首次登录；登录页需要选择对应租户。',
+        },
+        {
+          prop: 'admin_password',
+          label: '管理员密码',
+          type: 'password',
+          required: true,
+          tips: '至少 8 位，需包含大小写与数字。',
+        },
+      ] as AppFormField[])
+    : []),
 ]);
 
 async function loadPackages(): Promise<void> {
@@ -105,7 +124,14 @@ async function loadPackages(): Promise<void> {
 }
 
 function resetForm(): void {
-  Object.assign(form, { tenant_name: '', status: STATUS_ENABLED, package_id: null, remark: '' });
+  Object.assign(form, {
+    tenant_name: '',
+    status: STATUS_ENABLED,
+    package_id: null,
+    remark: '',
+    admin_username: '',
+    admin_password: '',
+  });
   formRef.value?.clearValidate();
 }
 
@@ -137,6 +163,10 @@ async function submit(): Promise<void> {
     package_id: form.package_id,
     remark: form.remark || null,
   };
+  if (editingId.value === null) {
+    payload.admin_username = form.admin_username.trim();
+    payload.admin_password = form.admin_password;
+  }
   saving.value = true;
   try {
     if (editingId.value === null) await createTenant(payload);

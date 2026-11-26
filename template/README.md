@@ -14,6 +14,8 @@
 │   └── goods/             # 样例模块（生成器产物）：entity / dto / handler / module
 ├── migrations/            # 业务迁移，与框架迁移分目录
 ├── templates/             # 代码生成模板覆写点（可选）
+├── web/                   # Vue 3 管理端（与框架同一份，cicada new 自动复制）
+├── clients/app/       # Tauri 2 客户端（桌面 + Android/iOS，复用 web/）
 └── config/default.yaml    # 分层配置
 ```
 
@@ -30,12 +32,24 @@ cargo run
 起来之后：`/healthz`、`/readyz`、`/metrics` 是健康与指标，`/docs` 是 OpenAPI（Swagger UI），
 `/api/v1/auth/login` 用上一步的 admin 账号换 token。
 
+前端与原生客户端：
+
+```bash
+cd web && corepack pnpm install && corepack pnpm dev
+cd ../clients/app && corepack pnpm install && corepack pnpm dev   # 桌面；Android/iOS 见 README
+```
+
+生成工程只带移动端共享代码与配置；首次 Android/iOS 构建前在 `clients/app` 运行
+`corepack pnpm android:init`（Android SDK/NDK）或在 macOS 上运行 `corepack pnpm ios:init`。
+
 ## 加一个业务模块
 
 1. 建表（可以直接建，也可以让生成器从既有表反推）；
-2. `cicada-cli gen --table <表名>` 产出 entity / dto / handler / module / 迁移 / 前端页；
-3. 把 `business/<模块>/` 放进本工程，迁移放进 `migrations/` 并在 `migrations/mod.rs` 登记；
-4. 在 `src/main.rs` 的 `AppBuilder` 上加一行 `.with_module(Box::new(...))`。
+2. `cicada-cli gen --table <表名>` 产出 entity / dto / handler / module / 迁移 / 前端页，
+   目录已按本工程布局排好；
+3. 把 `business/<模块>/` 合并到本工程，迁移合并到 `migrations/` 并在 `migrations/mod.rs` 登记；
+4. 把 `web/src/...` 合并到 `web/`（桌面与移动端自动复用）；
+5. 在 `src/main.rs` 的 `AppBuilder` 上加一行 `.with_module(Box::new(...))`。
 
 `business/goods/` 是生成器产物的样例（表 `biz_goods`），看懂后可以直接删掉换成自己的表：
 `owns`（数据属主）、`perms`（权限点）、`routes`（带权限元数据的路由）三者会在启动期

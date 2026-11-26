@@ -326,7 +326,7 @@ pub async fn list_db_tables(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ImportRequest {
     pub tables: Vec<String>,
-    /// `crud` / `tree` / `sub`，缺省 `crud`。
+    /// `crud` / `tree`，缺省 `crud`。
     pub tpl_category: Option<String>,
 }
 

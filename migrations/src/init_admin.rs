@@ -209,14 +209,8 @@ pub async fn init_admin(db: &DatabaseConnection) -> Result<(), DbErr> {
     )
     .await?;
 
-    // 角色-全菜单（参考实现基线 1..=4 / 100..=116 / 500 / 501 / 1000..=1061，
-    // 以及 cicada 扩展的平台管理与通知中心菜单）。
-    let mut menu_ids: Vec<i64> = vec![1, 2, 3, 4, 5, 6];
-    menu_ids.extend(100..=116);
-    menu_ids.extend([200, 201, 202, 300, 301, 302, 500, 501]);
-    menu_ids.extend(1000..=1083);
-    menu_ids.push(1094); // 数据监控：只读数据统计
-    for menu_id in menu_ids {
+    // 角色-全菜单：以库里的实际菜单为准（含目录、菜单与按钮）。
+    for menu_id in all_menu_ids(db).await? {
         insert_row(
             db,
             "sys_role_menu",
@@ -233,107 +227,19 @@ pub async fn init_admin(db: &DatabaseConnection) -> Result<(), DbErr> {
 }
 
 /// 全局菜单集合（`sys_menu` 不带 `tenant_id`，各租户共享同一套菜单结构）。
-fn all_menu_ids() -> Vec<i64> {
-    let mut ids: Vec<i64> = vec![1, 2, 3, 4, 5, 6];
-    ids.extend(100..=116);
-    ids.extend([200, 201, 202, 300, 301, 302, 500, 501]);
-    ids.extend(1000..=1083);
-    ids
-}
-
-/// 新租户初始化（`tenant init`）：建租户 + 管理员角色 + 管理员账号。
+/// 当前库里的全部菜单 id（含目录、菜单与按钮）。
 ///
-/// 与 [`init_admin`] 的区别：这里不写死主键（交给自增），返回新建的租户 id 与账号 id。
-pub async fn init_tenant_admin(
-    db: &DatabaseConnection,
-    tenant_name: &str,
-    admin_username: &str,
-    admin_password: &str,
-) -> Result<(i64, i64), DbErr> {
-    let tenant_id = insert_returning_id(
-        db,
-        "INSERT INTO sys_tenant (tenant_name, status, remark, create_by, create_time)          VALUES ($1, 0, $2, $3, now()) RETURNING tenant_id",
-        vec![
-            tenant_name.into(),
-            "由 tenant init 创建".into(),
-            admin_username.into(),
-        ],
-    )
-    .await?;
-
-    let role_id = insert_returning_id(
-        db,
-        "INSERT INTO sys_role          (tenant_id, role_name, role_key, role_sort, data_scope, status, version, remark, create_by, create_time)          VALUES ($1, '超级管理员', 'admin', 1, 1, 0, 0, '租户内置管理员', $2, now()) RETURNING role_id",
-        vec![tenant_id.into(), admin_username.into()],
-    )
-    .await?;
-
-    assert_password_policy(admin_password)?;
-    let pw_hash = hash_password(admin_password).map_err(|e| DbErr::Custom(e.to_string()))?;
-    let user_id = insert_returning_id(
-        db,
-        "INSERT INTO sys_user          (tenant_id, user_name, nick_name, password, status, version, remark, create_by, create_time)          VALUES ($1, $2, '管理员', $3, 0, 0, '租户初始管理员', $4, now()) RETURNING user_id",
-        vec![
-            tenant_id.into(),
-            admin_username.into(),
-            pw_hash.into(),
-            admin_username.into(),
-        ],
-    )
-    .await?;
-
-    insert_row(
-        db,
-        "sys_user_identity",
-        "identity_id",
-        &[
-            "tenant_id",
-            "user_id",
-            "identity_type",
-            "identifier",
-            "provider",
-            "verified_at",
-            "is_primary",
-            "create_time",
-        ],
-        vec![
-            v(tenant_id),
-            v(user_id),
-            v("Username"),
-            v(admin_username),
-            v(Value::String(None)),
-            v(chrono::Utc::now()),
-            v(true),
-            v(chrono::Utc::now()),
-        ],
-    )
-    .await?;
-
-    insert_row(
-        db,
-        "sys_user_role",
-        "user_id",
-        &["user_id", "role_id"],
-        vec![v(user_id), v(role_id)],
-    )
-    .await?;
-
-    for menu_id in all_menu_ids() {
-        insert_row(
-            db,
-            "sys_role_menu",
-            "role_id",
-            &["role_id", "menu_id"],
-            vec![v(role_id), v(menu_id)],
-        )
+/// 不写死范围：菜单会随迁移增长，硬编码的区间让新模块在管理员侧栏里静默消失。
+async fn all_menu_ids(db: &DatabaseConnection) -> Result<Vec<i64>, DbErr> {
+    let rows = db
+        .query_all_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT menu_id FROM sys_menu ORDER BY menu_id",
+        ))
         .await?;
-    }
-
-    // 租户自带的通知模板（导入导出「导出完成后经通知中心给下载链接」）：模板的唯一键里
-    // 有 `tenant_id`，所以它属于「建租户」这条路径，而不是只在默认租户上跑一次的 `seed()`。
-    crate::seed::seed_notify_templates(db, tenant_id).await?;
-
-    Ok((tenant_id, user_id))
+    rows.into_iter()
+        .map(|row| row.try_get_by_index::<i64>(0))
+        .collect()
 }
 
 /// 重置某个账号的密码（`admin reset`）。返回是否有行被更新。
@@ -357,20 +263,4 @@ pub async fn reset_password(
         ))
         .await?;
     Ok(res.rows_affected() > 0)
-}
-
-async fn insert_returning_id(
-    db: &DatabaseConnection,
-    sql: &str,
-    values: Vec<sea_orm_migration::sea_orm::Value>,
-) -> Result<i64, DbErr> {
-    let row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            sql,
-            values,
-        ))
-        .await?
-        .ok_or_else(|| DbErr::Custom("插入未返回主键".to_string()))?;
-    row.try_get_by_index::<i64>(0)
 }

@@ -1,17 +1,22 @@
 //! 认证接口：登录、刷新、登出、当前用户、路由。
 
 use axum::{Json, extract::State, http::StatusCode};
+use chrono::Utc;
 use rust_i18n::t;
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use cicada_audit::LoginLog;
 use cicada_auth::{AuthError, LockoutPolicy, SessionPolicy, lockout_key};
-use cicada_kernel::RoleId;
-use cicada_system::{load_grant_snapshot, load_menu_tree};
+use cicada_kernel::{RequestContext, RoleId, TenantId};
+use cicada_system::{
+    TenantColumn, TenantEntity, UserActiveModel, UserColumn, UserEntity, UserModel,
+    load_grant_snapshot, load_menu_tree,
+};
 
 use crate::extractor::RequestContextExt;
-use crate::problem::{ApiErr, BizCode, Problem};
+use crate::problem::{ApiErr, BizCode, FieldError, Problem};
 use crate::state::AppState;
 
 #[derive(Deserialize, ToSchema)]
@@ -19,6 +24,9 @@ pub struct LoginRequest {
     /// 登录标识符：账号名 / 手机 / 邮箱。
     pub username: String,
     pub password: String,
+    /// 目标租户 id；缺省使用 `tenant.default_id`。多租户前端从 `/auth/tenants` 选择。
+    #[serde(default)]
+    pub tenant_id: Option<i64>,
     /// 启用 TOTP 的账号在此携带 6 位动态码。
     #[serde(default)]
     pub totp: Option<String>,
@@ -55,9 +63,25 @@ pub struct RefreshResponse {
 pub struct ProfileResponse {
     pub user_id: i64,
     pub user_name: String,
+    pub nick_name: String,
+    pub email: Option<String>,
+    pub phonenumber: Option<String>,
     pub tenant_id: i64,
     pub roles: Vec<String>,
     pub permissions: Vec<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct ChangePasswordRequest {
+    pub old_password: String,
+    pub new_password: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct UpdateProfileRequest {
+    pub nick_name: String,
+    pub email: Option<String>,
+    pub phonenumber: Option<String>,
 }
 
 /// 密码失败锁定策略（配置 `auth.password`）。
@@ -93,7 +117,8 @@ pub async fn login(
     let ctx = ctx.into_inner();
     let ip = ctx.ip.to_string();
     let ua = ctx.user_agent.unwrap_or_default();
-    let tenant_id = ctx.tenant_id.get();
+    let tenant = resolve_login_tenant(&state, req.tenant_id, ctx.tenant_id, &ctx.locale).await?;
+    let tenant_id = tenant.get();
 
     // 图形验证码闸门：连续失败达到阈值后强制；前端主动带了也校验。
     let failures = state
@@ -134,7 +159,7 @@ pub async fn login(
         state.lockout.as_ref(),
         session_policy(&state),
         lockout_policy(&state),
-        ctx.tenant_id,
+        tenant,
         &req.username,
         &req.password,
         req.totp.as_deref(),
@@ -178,6 +203,68 @@ pub async fn login(
             Err(map_auth_error(&ctx.locale, &e))
         }
     }
+}
+
+/// 解析登录租户：显式 `tenant_id` 必须存在且启用；否则回落默认租户。
+async fn resolve_login_tenant(
+    state: &AppState,
+    requested: Option<i64>,
+    fallback: TenantId,
+    locale: &str,
+) -> Result<TenantId, ApiErr> {
+    let Some(id) = requested else {
+        return Ok(fallback);
+    };
+    let tenant = TenantEntity::find_by_id(id)
+        .one(state.db.conn())
+        .await
+        .map_err(|e| tenant_db_error(locale, e))?;
+    match tenant {
+        Some(row) if row.status == 0 => Ok(TenantId::new(row.tenant_id)),
+        _ => Err(Problem::new(
+            BizCode::SysNotFound,
+            t!("auth.tenant_invalid", locale = locale).into_owned(),
+        )),
+    }
+}
+
+fn tenant_db_error(locale: &str, e: impl std::fmt::Display) -> ApiErr {
+    tracing::error!(error = %e, "租户查询失败");
+    Problem::new(
+        BizCode::Internal,
+        t!("common.internal_error", locale = locale).into_owned(),
+    )
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct LoginTenantVo {
+    pub tenant_id: i64,
+    pub tenant_name: String,
+}
+
+/// 登录页的租户选择数据：只暴露启用中的租户 id 与名称。
+#[utoipa::path(
+    get,
+    path = "/auth/tenants",
+    responses((status = 200, description = "启用中的租户", body = [LoginTenantVo]))
+)]
+pub async fn login_tenants(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<LoginTenantVo>>, ApiErr> {
+    let rows = TenantEntity::find()
+        .filter(TenantColumn::Status.eq(0))
+        .order_by_asc(TenantColumn::TenantId)
+        .all(state.db.conn())
+        .await
+        .map_err(|e| tenant_db_error("zh-CN", e))?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| LoginTenantVo {
+                tenant_id: row.tenant_id,
+                tenant_name: row.tenant_name,
+            })
+            .collect(),
+    ))
 }
 
 /// 图形验证码响应：`img` 为不带 data URI 前缀的 base64 PNG；
@@ -376,6 +463,15 @@ pub(crate) fn map_auth_error(locale: &str, e: &AuthError) -> ApiErr {
             )
             .into_owned(),
         ),
+        AuthError::OAuthNativeUnsupported(provider) => (
+            BizCode::ValidationFields,
+            t!(
+                "auth.oauth.native_unsupported",
+                locale = locale,
+                provider = provider
+            )
+            .into_owned(),
+        ),
         // state 失效可能是 CSRF 或过期，统一按未认证处理（401 语义）。
         AuthError::OAuthStateInvalid => (
             BizCode::AuthUnauthorized,
@@ -410,16 +506,20 @@ pub(crate) fn map_auth_error(locale: &str, e: &AuthError) -> ApiErr {
     )
 )]
 pub async fn profile(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     ctx: RequestContextExt,
 ) -> Result<Json<ProfileResponse>, ApiErr> {
     let ctx = ctx.into_inner();
     let Some(principal) = &ctx.principal else {
         return Err(unauthorized(&ctx.locale));
     };
+    let user = current_user(&state, &ctx).await?;
     Ok(Json(ProfileResponse {
         user_id: principal.user_id.get(),
         user_name: principal.user_name.clone(),
+        nick_name: user.nick_name,
+        email: user.email,
+        phonenumber: user.phonenumber,
         tenant_id: principal.tenant_id.get(),
         roles: ctx.roles.clone(),
         permissions: ctx
@@ -428,6 +528,148 @@ pub async fn profile(
             .map(|p| p.as_str().to_string())
             .collect(),
     }))
+}
+
+/// 当前登录用户在本租户内的实体行。
+async fn current_user(state: &AppState, ctx: &RequestContext) -> Result<UserModel, ApiErr> {
+    let Some(principal) = &ctx.principal else {
+        return Err(unauthorized(&ctx.locale));
+    };
+    UserEntity::find()
+        .filter(UserColumn::UserId.eq(principal.user_id.get()))
+        .filter(UserColumn::TenantId.eq(ctx.tenant_id.get()))
+        .filter(UserColumn::DeletedAt.is_null())
+        .one(state.db.conn())
+        .await
+        .map_err(|e| user_db_error(&ctx.locale, e))?
+        .ok_or_else(|| {
+            Problem::new(
+                BizCode::SysNotFound,
+                t!("common.not_found", locale = ctx.locale.as_str()).into_owned(),
+            )
+        })
+}
+
+fn user_db_error(locale: &str, e: impl std::fmt::Display) -> ApiErr {
+    tracing::error!(error = %e, "用户资料数据库操作失败");
+    Problem::new(
+        BizCode::Internal,
+        t!("common.internal_error", locale = locale).into_owned(),
+    )
+}
+
+fn field_problem(field: &str, message: String) -> ApiErr {
+    Problem::new(BizCode::ValidationFields, message.clone())
+        .fields(vec![FieldError::new(field, message)])
+}
+
+fn clean_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[utoipa::path(
+    put,
+    path = "/auth/password",
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 204, description = "密码已更新，所有会话已撤销"),
+        (status = 401, description = "未认证", body = Problem),
+        (status = 422, description = "当前密码错误或新密码不合规", body = Problem)
+    )
+)]
+#[cicada_macros::audit(module = "auth", action = "password:change", kind = "update")]
+pub async fn change_password(
+    State(state): State<AppState>,
+    ctx: RequestContextExt,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<StatusCode, ApiErr> {
+    let ctx = ctx.into_inner();
+    let Some(principal) = &ctx.principal else {
+        return Err(unauthorized(&ctx.locale));
+    };
+    let user = current_user(&state, &ctx).await?;
+    let matches = cicada_auth::verify_password(&req.old_password, &user.password)
+        .map_err(|e| map_auth_error(&ctx.locale, &e))?;
+    if !matches {
+        return Err(field_problem(
+            "old_password",
+            t!("auth.password.old_wrong", locale = ctx.locale.as_str()).into_owned(),
+        ));
+    }
+    if req.new_password == req.old_password {
+        return Err(field_problem(
+            "new_password",
+            t!("auth.password.same", locale = ctx.locale.as_str()).into_owned(),
+        ));
+    }
+    let min_length = state.config.auth.password.min_length;
+    let problems = cicada_infra::password_problems(&req.new_password, min_length);
+    if !problems.is_empty() {
+        return Err(field_problem(
+            "new_password",
+            cicada_infra::password_problem_text(&problems, min_length),
+        ));
+    }
+    let hash = cicada_auth::hash_password(&req.new_password)
+        .map_err(|e| map_auth_error(&ctx.locale, &e))?;
+    UserActiveModel {
+        user_id: Set(user.user_id),
+        tenant_id: Set(user.tenant_id),
+        password: Set(hash),
+        update_time: Set(Some(Utc::now())),
+        ..Default::default()
+    }
+    .update(state.db.conn())
+    .await
+    .map_err(|e| user_db_error(&ctx.locale, e))?;
+    // 改密即失效：所有会话（含当前）都不再可信。
+    if let Err(e) = state.sessions.revoke_user(principal.user_id.get()).await {
+        tracing::warn!(error = %e, "改密后撤销会话失败");
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    put,
+    path = "/auth/profile",
+    request_body = UpdateProfileRequest,
+    responses(
+        (status = 204, description = "资料已更新"),
+        (status = 401, description = "未认证", body = Problem),
+        (status = 422, description = "昵称或邮箱格式不合规", body = Problem)
+    )
+)]
+#[cicada_macros::audit(module = "auth", action = "profile:update", kind = "update")]
+pub async fn update_profile(
+    State(state): State<AppState>,
+    ctx: RequestContextExt,
+    Json(req): Json<UpdateProfileRequest>,
+) -> Result<StatusCode, ApiErr> {
+    let ctx = ctx.into_inner();
+    let user = current_user(&state, &ctx).await?;
+    let nick_name = req.nick_name.trim();
+    if nick_name.is_empty() {
+        return Err(field_problem("nick_name", "昵称不能为空".to_string()));
+    }
+    let email = clean_optional(req.email);
+    if email.as_deref().is_some_and(|value| !value.contains('@')) {
+        return Err(field_problem("email", "邮箱格式不正确".to_string()));
+    }
+    UserActiveModel {
+        user_id: Set(user.user_id),
+        tenant_id: Set(user.tenant_id),
+        nick_name: Set(nick_name.to_string()),
+        email: Set(email),
+        phonenumber: Set(clean_optional(req.phonenumber)),
+        update_time: Set(Some(Utc::now())),
+        ..Default::default()
+    }
+    .update(state.db.conn())
+    .await
+    .map_err(|e| user_db_error(&ctx.locale, e))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(

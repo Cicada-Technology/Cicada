@@ -24,7 +24,7 @@ const JWT_SECRET: &str = "test-secret";
 
 fn url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://cicada:2025%40hanmole@localhost:5432/cicada".to_string())
+        .unwrap_or_else(|_| "postgres://cicada:2026%40cicada@localhost:5432/cicada".to_string())
 }
 
 async fn connect(schema: Option<&str>) -> DatabaseConnection {
@@ -213,6 +213,198 @@ async fn post_json(
     )
     .await
     .unwrap()
+}
+
+fn put_json_auth(uri: &str, token: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn post_json_auth(uri: &str, token: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn get_auth(uri: &str, token: &str) -> Request<Body> {
+    bearer(uri, token)
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL"]
+async fn self_service_profile_and_password() {
+    let (state, token) = setup("web_auth_self_service").await;
+    let app = router(state);
+
+    let updated = app
+        .clone()
+        .oneshot(put_json_auth(
+            "/auth/profile",
+            &token,
+            serde_json::json!({
+                "nick_name": "Root",
+                "email": "root@example.com",
+                "phonenumber": "13800000000"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::NO_CONTENT);
+
+    let profile = app
+        .clone()
+        .oneshot(get_auth("/auth/profile", &token))
+        .await
+        .unwrap();
+    assert_eq!(profile.status(), StatusCode::OK);
+    let body = json_body(profile).await;
+    assert_eq!(body["nick_name"], "Root");
+    assert_eq!(body["email"], "root@example.com");
+
+    // 旧密码错误：字段级 422。
+    let wrong = app
+        .clone()
+        .oneshot(put_json_auth(
+            "/auth/password",
+            &token,
+            serde_json::json!({ "old_password": "wrong", "new_password": "NewPass@2026" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // 正确旧密码：改密并撤销全部会话。
+    let changed = app
+        .clone()
+        .oneshot(put_json_auth(
+            "/auth/password",
+            &token,
+            serde_json::json!({
+                "old_password": "Cicada@2026",
+                "new_password": "NewPass@2026"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), StatusCode::NO_CONTENT);
+
+    let revoked = app
+        .clone()
+        .oneshot(get_auth("/auth/profile", &token))
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+
+    let login = post_json(
+        app,
+        "/auth/login",
+        serde_json::json!({ "username": "admin", "password": "NewPass@2026" }),
+    )
+    .await;
+    assert_eq!(login.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL"]
+async fn tenant_admin_can_login_after_provisioning() {
+    let (state, token) = setup("web_tenant_login").await;
+    let app = router(state);
+
+    let created = app
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/v1/system/tenants",
+            &token,
+            serde_json::json!({
+                "tenant_name": "Acme",
+                "status": 0,
+                "package_id": null,
+                "remark": "测试租户",
+                "admin_username": "acme-admin",
+                "admin_password": "Acme@2026"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let body = json_body(created).await;
+    let tenant_id = body["tenant_id"].as_i64().unwrap();
+    assert!(tenant_id > 1);
+
+    let tenants = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/tenants")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(tenants.status(), StatusCode::OK);
+    let list = json_body(tenants).await;
+    assert!(
+        list.as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["tenant_id"].as_i64() == Some(tenant_id)),
+        "{list}"
+    );
+
+    let login = post_json(
+        app.clone(),
+        "/auth/login",
+        serde_json::json!({
+            "username": "acme-admin",
+            "password": "Acme@2026",
+            "tenant_id": tenant_id
+        }),
+    )
+    .await;
+    assert_eq!(login.status(), StatusCode::OK);
+    let tokens = json_body(login).await;
+    let access = tokens["access_token"].as_str().unwrap();
+
+    let profile = app
+        .clone()
+        .oneshot(get_auth("/auth/profile", access))
+        .await
+        .unwrap();
+    let profile = json_body(profile).await;
+    assert_eq!(profile["tenant_id"].as_i64(), Some(tenant_id));
+    assert!(
+        !profile["permissions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("system:tenant:list")),
+        "租户管理员不应获得平台租户权限：{profile}"
+    );
+
+    // 租户管理员不是平台管理员：不能列出其它租户。
+    let cross_tenant = app
+        .clone()
+        .oneshot(get_auth("/api/v1/system/tenants", access))
+        .await
+        .unwrap();
+    assert_eq!(cross_tenant.status(), StatusCode::FORBIDDEN);
+
+    // 不选租户时仍按默认租户查：该账号不应在默认租户下登录成功。
+    let wrong_tenant = post_json(
+        app,
+        "/auth/login",
+        serde_json::json!({ "username": "acme-admin", "password": "Acme@2026" }),
+    )
+    .await;
+    assert_eq!(wrong_tenant.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

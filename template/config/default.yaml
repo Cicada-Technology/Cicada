@@ -6,11 +6,11 @@
 # 开发环境用 cicada 仓库的 `docker compose up -d` 起 PostgreSQL + Redis，
 # 下面的连接串即对应它的初始化脚本。
 server:
-  port: 8080
+  port: 8081
   body_limit_mb: 20
   graceful_shutdown_secs: 30
 db:
-  url: "postgres://cicada:2025%40hanmole@localhost:5432/cicada"
+  url: "postgres://cicada:2026%40cicada@localhost:5432/cicada"
   max_connections: 20
   min_connections: 0
   acquire_timeout_secs: 8
@@ -25,11 +25,13 @@ rls:
 tenant:
   enabled: true
   default_id: 1
-# 跨域（第 4 层）：默认关闭；前端独立域名部署时再开并列出源。
+# 跨域（第 4 层）：默认只放行 Tauri 桌面 origin；独立域名的前端按需追加。
 # 注意 `allowed_origins: ["*"]` 不能与 `allow_credentials: true` 同时使用。
 cors:
-  enabled: false
-  allowed_origins: []
+  # 桌面客户端（Tauri）从 tauri://localhost / http://tauri.localhost 访问 API。
+  # 浏览器管理端与 Nginx 同源，不需要 CORS；这里显式列出桌面 origin，不用通配符。
+  enabled: true
+  allowed_origins: ["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost"]
   allow_credentials: false
   max_age_secs: 3600
 # 限流（第 7 层）：单 IP 令牌桶 + 租户套餐 QPS（api_qps_limit，多租户设计）。
@@ -72,7 +74,7 @@ auth:
   # 第三方登录：providers 为空即关闭，相关接口返回 404。
   # kind: wechat（开放平台扫码，appid/secret + snsapi_login）| oidc（通用授权码流程）。
   # 微信的 unionid（拿不到时用 openid）与 OIDC 的 sub 是身份标识；
-  # redirect_uri 必须是提供方控制台登记的那个完整地址。
+  # redirect_uri 是浏览器回调页地址；native_redirect_uri 是原生客户端自定义 scheme（桌面/Android/iOS 共用）。
   oauth:
     # state 有效期（秒，单次使用）/ 未绑定时下发的绑定票据有效期（秒）
     state_ttl_secs: 300
@@ -85,7 +87,10 @@ auth:
     #   authorize_url: "https://open.weixin.qq.com/connect/qrconnect"
     #   token_url: "https://api.weixin.qq.com/sns/oauth2/access_token"
     #   userinfo_url: "https://api.weixin.qq.com/sns/userinfo"
-    #   redirect_uri: "https://api.example.com/auth/login/wechat/callback"
+    #   redirect_uri: "http://localhost:5173/oauth/callback"
+    #   # 原生客户端（桌面/Android/iOS）：提供方控制台登记的自定义 scheme；Tauri 包会注册 cicada:// 处理器。
+    #   # 不配则原生客户端调用 authorize-url?client=native 返回 422。
+    #   native_redirect_uri: "cicada://oauth/callback"
     # - code: keycloak
     #   kind: oidc
     #   client_id: cicada
@@ -93,7 +98,8 @@ auth:
     #   authorize_url: "https://sso.example.com/realms/cicada/protocol/openid-connect/auth"
     #   token_url: "https://sso.example.com/realms/cicada/protocol/openid-connect/token"
     #   userinfo_url: "https://sso.example.com/realms/cicada/protocol/openid-connect/userinfo"
-    #   redirect_uri: "https://api.example.com/auth/login/keycloak/callback"
+    #   redirect_uri: "http://localhost:5173/oauth/callback"
+    #   native_redirect_uri: "cicada://oauth/callback"
     #   scopes: ["openid", "profile", "email"]
 # 日志保留期与归档：按整月判定，先归档到对象存储再删分区。
 audit:

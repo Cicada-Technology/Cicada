@@ -7,9 +7,10 @@ use crate::async_export::{
     __path_list_export_tasks, ExportRequest, ExportTaskPage, ExportTaskVo,
 };
 use crate::auth::{
-    __path_captcha_image, __path_login, __path_logout, __path_profile, __path_refresh,
-    __path_routers, CaptchaVo, LoginRequest, LoginResponse, ProfileResponse, RefreshRequest,
-    RefreshResponse,
+    __path_captcha_image, __path_change_password, __path_login, __path_login_tenants,
+    __path_logout, __path_profile, __path_refresh, __path_routers, __path_update_profile,
+    CaptchaVo, ChangePasswordRequest, LoginRequest, LoginResponse, LoginTenantVo, ProfileResponse,
+    RefreshRequest, RefreshResponse, UpdateProfileRequest,
 };
 use crate::cache::{
     __path_cache_overview, __path_clear_keys, __path_get_key_meta, __path_list_domains,
@@ -54,8 +55,9 @@ use crate::notify::{
     RecordPage, RecordVo, SendBody, SendVo, TemplatePage, TemplateUpsert, TemplateVo,
 };
 use crate::oauth::{
-    __path_authorize_url, __path_bind_oauth, __path_callback, AuthorizeUrlResponse,
-    BindOAuthRequest, BindOAuthResponse, CallbackRequest, CallbackResponse, ExternalIdentityVo,
+    __path_authorize_url, __path_bind_oauth, __path_callback, __path_list_providers,
+    AuthorizeUrlResponse, BindOAuthRequest, BindOAuthResponse, CallbackRequest, CallbackResponse,
+    ExternalIdentityVo, OAuthProviderVo,
 };
 use crate::online::{
     __path_batch_force_logout, __path_force_logout, __path_list_online,
@@ -92,9 +94,10 @@ use crate::system::menu::{
     RoleMenuTree,
 };
 use crate::system::notice::{
-    __path_create_notice, __path_delete_notice, __path_get_notice, __path_list_notice_readers,
-    __path_list_notices, __path_mark_notice_read, __path_top_notices, __path_update_notice,
-    NoticePage, NoticeReaderPage, NoticeReaderVo, NoticeUpsert, NoticeVo, TopNoticeVo,
+    __path_create_notice, __path_delete_notice, __path_get_notice, __path_get_notice_mine,
+    __path_list_notice_readers, __path_list_notices, __path_mark_notice_read, __path_top_notices,
+    __path_update_notice, NoticePage, NoticeReaderPage, NoticeReaderVo, NoticeUpsert, NoticeVo,
+    TopNoticeVo,
 };
 use crate::system::post::{
     __path_create_post, __path_delete_post, __path_export_posts, __path_get_post,
@@ -127,10 +130,13 @@ use crate::system::user::{
         readyz,
         metrics,
         login,
+        login_tenants,
         captcha_image,
         refresh,
         logout,
         profile,
+        update_profile,
+        change_password,
         routers,
         list_identities,
         bind_identity,
@@ -139,6 +145,7 @@ use crate::system::user::{
         totp_setup,
         totp_enable,
         totp_disable,
+        list_providers,
         authorize_url,
         callback,
         bind_oauth,
@@ -229,6 +236,7 @@ use crate::system::user::{
         update_notice,
         delete_notice,
         mark_notice_read,
+        get_notice_mine,
         list_notice_readers,
         top_notices,
         list_jobs,
@@ -289,9 +297,12 @@ use crate::system::user::{
         Health,
         LoginRequest,
         LoginResponse,
+        LoginTenantVo,
         RefreshRequest,
         RefreshResponse,
         ProfileResponse,
+        ChangePasswordRequest,
+        UpdateProfileRequest,
         CaptchaVo,
         Problem,
         FieldError,
@@ -303,6 +314,7 @@ use crate::system::user::{
         IdentityVo,
         BindIdentityRequest,
         AuthorizeUrlResponse,
+        OAuthProviderVo,
         CallbackRequest,
         CallbackResponse,
         ExternalIdentityVo,

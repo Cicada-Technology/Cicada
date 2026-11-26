@@ -67,6 +67,8 @@ const messages: MessageSchema = {
   login: {
     title: 'Sign in',
     subtitle: 'Continue with your account',
+    tenant: 'Tenant',
+    tenantPlaceholder: 'Choose a tenant',
     username: 'Account',
     usernamePlaceholder: 'Username / phone / email',
     password: 'Password',

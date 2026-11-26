@@ -431,10 +431,6 @@ fn check_category(plan: &TablePlan) -> Result<(), CodegenError> {
     crate::plan::validate_plan(plan)?;
     match plan.tpl_category {
         TplCategory::Crud | TplCategory::Tree => Ok(()),
-        other => Err(CodegenError::Unsupported(format!(
-            "模板分类 {} 尚未实现（已交付单表 crud 与树表 tree）",
-            other.as_str()
-        ))),
     }
 }
 

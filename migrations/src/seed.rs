@@ -32,6 +32,8 @@ pub async fn seed(db: &DatabaseConnection) -> Result<(), DbErr> {
     seed_dict_data(db).await?;
     seed_config(db).await?;
     seed_menus(db).await?;
+    sync_admin_menu_grants(db).await?;
+    seed_demo(db).await?;
     seed_jobs(db).await?;
     seed_notify_templates(db, DEFAULT_TENANT).await?;
     reset_sequences(db).await?;
@@ -118,6 +120,10 @@ pub async fn reset_sequences(db: &DatabaseConnection) -> Result<(), DbErr> {
         ("sys_dict_data", "dict_code"),
         ("sys_config", "config_id"),
         ("sys_job", "job_id"),
+        ("sys_dept", "dept_id"),
+        ("sys_post", "post_id"),
+        ("sys_notice", "notice_id"),
+        ("sys_tenant_package", "id"),
     ];
     for (table, col) in TABLES {
         reset_sequence(db, table, col).await?;
@@ -132,6 +138,92 @@ async fn reset_sequence(db: &DatabaseConnection, table: &str, col: &str) -> Resu
     );
     db.execute_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
         .await?;
+    Ok(())
+}
+
+/// 已有库补菜单时，默认管理员（role_id = 1）也要跟着拿到可见性授权。
+///
+/// `init-admin` 只会在创建管理员那一刻把「当时的全部菜单」授权一次；之后种子新增的
+/// 菜单（文件管理、导出任务、变更留痕等）如果不补授权，接口有数据但侧栏永远看不到。
+async fn sync_admin_menu_grants(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(
+        "INSERT INTO sys_role_menu (role_id, menu_id) \
+         SELECT 1, menu_id FROM sys_menu \
+          WHERE EXISTS (SELECT 1 FROM sys_role WHERE role_id = 1) \
+         ON CONFLICT DO NOTHING",
+    )
+    .await?;
+    Ok(())
+}
+
+/// 演示数据：让「部门 / 岗位 / 公告 / 套餐」这些页面首次登录就有内容可看。
+///
+/// 每个应用自己的业务数据不应该进框架种子；这里只放最小的一组组织与公告样例，
+/// 全部 `ON CONFLICT DO NOTHING`，重复执行不会覆盖使用者后来修改的行。
+async fn seed_demo(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(
+        "INSERT INTO sys_dept \
+             (dept_id, tenant_id, parent_id, ancestors, dept_name, order_num, leader, \
+              phone, email, status, version, create_by, create_time, remark) \
+         VALUES \
+             (100, 1, 0, '0', 'cicada 总部', 1, 'admin', '13800000000', \
+              'admin@example.com', 0, 0, 'system', now(), '演示部门'), \
+             (101, 1, 100, '0,100', '研发部', 1, 'admin', NULL, NULL, 0, 0, \
+              'system', now(), '演示部门') \
+         ON CONFLICT (dept_id) DO NOTHING",
+    )
+    .await?;
+
+    // 默认租户挂到演示套餐；已有套餐归属不覆盖。
+    db.execute_unprepared(
+        "UPDATE sys_tenant SET package_id = 1 WHERE tenant_id = 1 AND package_id IS NULL",
+    )
+    .await?;
+
+    // 已有管理员补一个归属部门；只在为空时写，不覆盖使用者后来调整的组织。
+    db.execute_unprepared(
+        "UPDATE sys_user SET dept_id = 100 WHERE user_id = 1 AND dept_id IS NULL",
+    )
+    .await?;
+
+    db.execute_unprepared(
+        "INSERT INTO sys_post \
+             (post_id, tenant_id, post_code, post_name, post_sort, status, version, \
+              create_by, create_time, remark) \
+         VALUES \
+             (1, 1, 'ceo', '首席执行官', 1, 0, 0, 'system', now(), '演示岗位'), \
+             (2, 1, 'engineer', '研发工程师', 2, 0, 0, 'system', now(), '演示岗位') \
+         ON CONFLICT DO NOTHING",
+    )
+    .await?;
+
+    db.execute_unprepared(
+        "INSERT INTO sys_notice \
+             (notice_id, notice_title, notice_type, notice_content, status, \
+              create_by, create_time, remark) \
+         VALUES \
+             (1, '欢迎使用 cicada 管理后台', 1, \
+              '<p>登录后左侧菜单按权限生成；个人中心可改密、绑定 TOTP 与登录身份。</p>', \
+              0, 'system', now(), '演示公告'), \
+             (2, '文件、导出与审计页面已就绪', 2, \
+              '<p>系统管理下有文件管理与导出任务；监控下有变更留痕。</p>', \
+              0, 'system', now(), '演示公告') \
+         ON CONFLICT (notice_id) DO NOTHING",
+    )
+    .await?;
+
+    db.execute_unprepared(
+        "INSERT INTO sys_tenant_package \
+             (id, code, name, user_limit, storage_limit_mb, api_qps_limit, features, \
+              status, remark, create_by, create_time) \
+         VALUES \
+             (1, 'basic', '基础版', 20, 1024, 50, '{}'::jsonb, 0, '演示套餐', 'system', now()), \
+             (2, 'pro', '专业版', -1, -1, -1, '{\"audit\": true}'::jsonb, 0, \
+              '不限用户/存储/QPS', 'system', now()) \
+         ON CONFLICT DO NOTHING",
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -515,7 +607,6 @@ pub const MENU_SEED: &[(i64, i64, &str, i32, &str, &str, &str)] = &[
         "/monitor/cache",
         "monitor:cache:view",
     ),
-    (114, 3, "表单构建", 1, "C", "/tool/build", "tool:build:view"),
     (115, 3, "代码生成", 2, "C", "/tool/gen", "tool:gen:view"),
     (
         116,

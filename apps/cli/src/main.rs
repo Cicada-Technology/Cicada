@@ -20,6 +20,7 @@ mod new;
 
 use cicada_infra::Config;
 use cicada_infra::rls;
+use cicada_system::{NewTenant, create_tenant_with_admin};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use sea_orm_migration::MigratorTraitSelf;
 
@@ -150,6 +151,15 @@ async fn run() -> Result<(), CliError> {
         "seed" => {
             let db = connect().await?;
             cicada_migrations::seed::seed(&db).await.map_err(fail)?;
+            // 种子可能新增菜单/权限点；不清版本号，已有 Redis 缓存会让侧栏继续用旧菜单。
+            if let Ok(config) = Config::load()
+                && let Ok(cache) =
+                    cicada_infra::Cache::connect(config.redis.url.expose_secret()).await
+            {
+                let _ = cache.incr("cicada:permver:1").await;
+                let _ = cache.incr("cicada:menu:ver:1").await;
+                println!("权限与菜单缓存已失效");
+            }
             println!("种子写入完成");
         }
         "init-admin" => {
@@ -171,11 +181,29 @@ async fn run() -> Result<(), CliError> {
             let admin = flag(rest, "--admin").unwrap_or_else(|| "admin".to_string());
             let password = flag(rest, "--password")
                 .ok_or_else(|| CliError::Usage("tenant init 缺少 --password".to_string()))?;
+            let config = Config::load().map_err(fail)?;
             let db = connect().await?;
-            let (tenant_id, user_id) =
-                cicada_migrations::init_admin::init_tenant_admin(&db, &name, &admin, &password)
-                    .await
-                    .map_err(fail)?;
+            let provisioned = create_tenant_with_admin(
+                &db,
+                NewTenant {
+                    name: &name,
+                    status: 0,
+                    package_id: None,
+                    remark: Some("由 tenant init 创建"),
+                    admin_username: &admin,
+                    admin_password: &password,
+                    password_min_length: config.auth.password.min_length,
+                    create_by: Some(&admin),
+                },
+            )
+            .await
+            .map_err(|e| CliError::Failed(e.to_string()))?;
+            let tenant_id = provisioned.tenant.tenant_id;
+            let user_id = provisioned.admin_user_id;
+            // 租户自带通知模板（导出完成通知）属于「建租户」路径。
+            cicada_migrations::seed::seed_notify_templates(&db, tenant_id)
+                .await
+                .map_err(fail)?;
             println!("租户 {tenant_id}（{name}）已创建，管理员 {admin}（user_id={user_id}）");
         }
         "admin" => {

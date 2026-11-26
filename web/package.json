@@ -8,10 +8,14 @@
   "engines": {
     "node": ">=22.12"
   },
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "build:only": "vite build",
+    "build:desktop": "vue-tsc --noEmit && vite build --mode desktop",
+    "build:android": "vue-tsc --noEmit && vite build --mode android",
+    "build:ios": "vue-tsc --noEmit && vite build --mode ios",
     "preview": "vite preview --port 4173",
     "typecheck": "vue-tsc --noEmit",
     "lint": "eslint .",
@@ -21,6 +25,7 @@
   },
   "dependencies": {
     "@lucide/vue": "^1.62.0",
+    "@tauri-apps/api": "^2.12.5",
     "axios": "^1.20.0",
     "dayjs": "^1.11.23",
     "element-plus": "^2.14.7",

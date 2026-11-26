@@ -13,6 +13,8 @@ import { defineConfig, loadEnv } from 'vite';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const proxyTarget = env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:8081';
+  // 真机/模拟器调试时 Tauri 会给出局域网地址；浏览器开发不设置，保持 localhost。
+  const devHost = process.env.TAURI_DEV_HOST;
   // 版本号从 package.json 读，概览页要显示「跑的是哪一版前端」（排障时最常被问的一句）。
   const { version } = JSON.parse(
     readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
@@ -29,9 +31,13 @@ export default defineConfig(({ mode }) => {
     server: {
       port: Number(env.VITE_DEV_PORT || 5173),
       strictPort: false,
+      host: devHost || undefined,
+      hmr: devHost ? { protocol: 'ws', host: devHost, port: 1421 } : undefined,
       proxy: {
         '/api': { target: proxyTarget, changeOrigin: true },
         '/auth': { target: proxyTarget, changeOrigin: true },
+        '/docs': { target: proxyTarget, changeOrigin: true },
+        '/api-docs': { target: proxyTarget, changeOrigin: true },
       },
     },
     build: {

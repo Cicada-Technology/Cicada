@@ -11,6 +11,35 @@
 
 ### Added（未发布）
 
+- Tauri 2 原生客户端（`clients/app`）：同一套工程覆盖桌面（Linux/macOS/Windows）、
+  Android、iOS，复用同一份 Vue 管理端与 REST 契约；新增
+  `secure_load` / `secure_save` / `secure_clear` 把会话令牌放进平台安全存储
+  （Secret Service / Credential Manager / Keychain / Android Keystore）。
+- Tauri 平台脚本与配置：`android:init|dev|build`、`ios:init|dev|build`，
+  `tauri.android.conf.json` / `tauri.ios.conf.json` 分别执行 `web` 的
+  `build:android` / `build:ios`；`gen/android` 入库，iOS 在 macOS 上生成 `gen/apple`。
+- 前端原生适配层（`utils/native.ts`）按 `isTauriApp()` 统一桌面与移动端；新增
+  ≤680px 手机布局（弹层不出界、表单标签上置、底部安全区）与移动端 API 环境文件。
+- `cicada new` 为新工程重写 Tauri identifier（`dev.<name>.client`）、keyring 服务与
+  deep-link scheme，避免多个生成应用撞包/抢深链。
+- Tauri 原生客户端第三方登录闭环：`authorize-url?client=native` 选择
+  `oauth.providers[].native_redirect_uri`（如 `cicada://oauth/callback`），系统浏览器
+  授权后由 desktop deep link / Android intent / iOS URL scheme 接回；回调请求带
+  `client: "native"`，令牌交换使用同一条 `redirect_uri`。未配置原生回调的提供方返回 422，
+  不回落到浏览器地址。
+- 自助账号闭环：`PUT /auth/profile`、`PUT /auth/password`、TOTP 与登录身份绑定界面；
+  个人中心页面 `/profile`。
+- 演示种子：部门（总部/研发部）、岗位、公告与租户套餐，`seed` 后这些页面首次登录
+  即有内容；迁移 000020 为已有库补上文件管理、导出任务、变更留痕菜单及管理员授权，
+  `seed` 同时递增权限/菜单缓存版本，侧栏无需手动清 Redis。
+- 手机端表格：固定操作列在窄屏改为随表滚动（不再遮挡中间列），分页只保留页码/
+  上一页/下一页并居中。
+- 多租户登录闭环：公开 `GET /auth/tenants`、登录请求可选 `tenant_id`；创建租户时在同一
+  事务里创建初始管理员、角色、身份与全菜单授权（`cicada_system::create_tenant_with_admin`）。
+- 文件管理、导出任务、变更留痕页面；公告顶栏铃铛与登录即可读的公告详情/已读接口。
+- 第三方登录前端：`GET /auth/oauth/providers`、登录页 SSO 按钮与 `/oauth/callback`。
+- 代码生成前端产物补齐 `/api/v1` 路径与 `PageResult<T>` 类型；生成物目录对齐
+  `business/`、`migrations/`，`cicada new` 自动复制 `web/` 与 `clients/app/`。
 - 数据监控：`GET /api/v1/monitor/data` 返回 PostgreSQL 库/表只读统计（库大小、连接池、
   会话数、行数、扫描次数、vacuum/analyze 时间），前端新增 `/monitor/data` 页面；
   接口权限点 `monitor:data:list`（迁移 000018 与种子补齐）。
@@ -27,6 +56,13 @@
 - 通知「测试发送」与发送记录补上模板编码、接收方、JSON 对象校验。
 - 代码生成配置补上实体类名、功能名称、模块名、业务名的必填校验。
 - 操作/登录日志「清空当前筛选结果」现在真的按筛选条件删除，不再误删整个租户日志。
+- 配置与启动链路：`config/default.yaml` 纳入仓库；数据库口令、8081 端口在 compose/CI/
+  模板/测试中统一；`Config::load` 支持可选 `.env`。
+- 平台管理边界：租户管理员不再能跨租户管理租户/套餐（仅默认租户超级管理员）。
+- 登录页图形验证码按业务码 `CICADA_AUTH_1005` 判断，英文界面不再卡死。
+- 迁移 000019 清理已移出范围的「表单构建」菜单。
+- 依赖安全升级：`zip 9`、`jsonwebtoken 12`、`ammonia 4.2.5`、`lettre 0.11.24`、
+  `rustls-webpki 0.103.17`、`tokio 1.54.1`、`url 2.5.9`；`cargo deny check` 通过。
 
 ## 0.1.0 - 2026-10-21
 
@@ -75,12 +111,13 @@ M0–M4 的完整基座：认证与权限、八个基础域、审计、导入导
 - 两级缓存：权限集合、菜单树、字典、参数、租户信息；版本号失效键
   `cicada:{域}:ver:{slot}`，防击穿单飞、防雪崩 TTL 抖动、防穿透空值短 TTL。
 - 开放 API（ADR 0003）：`sys_api_key` + `X-API-Key`，`scopes` 精确匹配进权限集合。
-- 通知中心（ADR 0002）：站内 / 邮件（lettre，真走 SMTP）/ Webhook 三通道 + 模板 + 投递记录。
+- 通知中心（ADR 0002）：邮件（lettre，真走 SMTP）/ Webhook / 短信 / IM 网关 + 模板 + 投递记录；
+  公告提供登录可见的顶栏提醒与已读标记。
 - 文件存储：opendal 驱动按配置切（`storage.driver = local | rustfs | oss | s3`）、
   magic-number 校验、两条下载路径（对象存储 presign；本地走一次性令牌，
   `GET /api/v1/files/dl/{token}` 单次消费且免鉴权）。
 - 异步导出：`sys_export_task`（迁移 000010）+ 完成通知；大表导出不进内存。
-- 代码生成：单表 / 树表 / 主子表模板，生成物由 fixture crate 常态编译验证。
+- 代码生成：单表 / 树表模板，Rust 生成物由 fixture crate 常态编译验证，前端生成物进入 typecheck。
 - 定时任务：apalis + PostgreSQL，在线增删改，集群不重复执行。
 - 可观测性：真实 `/metrics`（HTTP 时延与 QPS、连接池、缓存命中、任务结果、
   按业务码的错误率）、OTLP trace 导出、慢查询日志（`db.slow_query_ms`）。

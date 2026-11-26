@@ -62,7 +62,7 @@ const brandLogo = computed(() => (app.isDark ? '/brand/logo-dark.svg' : '/brand/
       <AppEmpty v-else icon="Lock" :title="t('layout.noMenu')" :hint="t('layout.noMenuHint')" />
     </el-scrollbar>
 
-    <div v-if="!collapsed" class="app-sidebar__footer">
+    <div v-if="!collapsed && !mobile" class="app-sidebar__footer">
       <button
         type="button"
         class="app-sidebar__collapse"

@@ -25,8 +25,6 @@ pub enum TplCategory {
     Crud,
     /// 树表。
     Tree,
-    /// 主子表。
-    Sub,
 }
 
 impl TplCategory {
@@ -34,8 +32,9 @@ impl TplCategory {
         match s {
             "crud" => Ok(Self::Crud),
             "tree" => Ok(Self::Tree),
-            "sub" => Ok(Self::Sub),
-            other => Err(CodegenError::Rejected(format!("未知模板分类：{other}"))),
+            other => Err(CodegenError::Rejected(format!(
+                "未知模板分类：{other}（支持 crud / tree）"
+            ))),
         }
     }
 
@@ -43,7 +42,6 @@ impl TplCategory {
         match self {
             Self::Crud => "crud",
             Self::Tree => "tree",
-            Self::Sub => "sub",
         }
     }
 }

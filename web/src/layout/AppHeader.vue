@@ -4,10 +4,18 @@
  *
  * 与侧栏同样是半透明材料——顶栏属于「外壳层」，内容从它下面滚过时要能透出来。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
+import {
+  getNoticeMine,
+  listTopNotices,
+  markNoticeRead,
+  type NoticeVo,
+  type TopNoticeVo,
+} from '@/api/system/notice';
+import AppDrawer from '@/components/AppDrawer.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import { LOCALE_LABELS, SUPPORTED_LOCALES, type AppLocale } from '@/locales';
 import { collectNavigableMenus, type NavigableMenu } from '@/router/dynamic';
@@ -15,7 +23,10 @@ import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
 import { usePermissionStore } from '@/stores/permission';
 import { useConfirm } from '@/composables/useConfirm';
+import { openExternalUrl } from '@/utils/native';
+import { formatDateTime } from '@/utils/format';
 
+const props = defineProps<{ mobile?: boolean; drawerOpen?: boolean }>();
 const emit = defineEmits<{ toggleSidebar: [] }>();
 
 const { t } = useI18n();
@@ -52,10 +63,35 @@ const breadcrumb = computed(() => {
 
 const themeLabel = computed(() => (app.isDark ? t('layout.themeDark') : t('layout.themeLight')));
 
+const topNotices = ref<TopNoticeVo[]>([]);
+const unreadCount = computed(() => topNotices.value.filter((item) => !item.read).length);
+const noticeDrawer = reactive({ visible: false, detail: null as NoticeVo | null });
+
+async function loadTopNotices(): Promise<void> {
+  try {
+    topNotices.value = await listTopNotices();
+  } catch {
+    // 顶栏公告失败不影响导航。
+  }
+}
+
+async function openNotice(item: TopNoticeVo): Promise<void> {
+  try {
+    noticeDrawer.detail = await getNoticeMine(item.notice_id);
+    noticeDrawer.visible = true;
+    if (!item.read) {
+      await markNoticeRead(item.notice_id);
+      item.read = true;
+    }
+  } catch {
+    // 提示由拦截器给出。
+  }
+}
+
 function openMenu(item: NavigableMenu): void {
   keyword.value = '';
   if (item.external) {
-    window.open(item.path, '_blank', 'noopener,noreferrer');
+    void openExternalUrl(item.path).catch(() => undefined);
     return;
   }
   void router.push(item.path);
@@ -80,7 +116,10 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown));
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown);
+  void loadTopNotices();
+});
 onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 </script>
 
@@ -89,11 +128,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
     <button
       type="button"
       class="app-header__icon-button"
-      :title="app.sidebarCollapsed ? t('layout.expand') : t('layout.collapse')"
+      :title="
+        props.mobile
+          ? props.drawerOpen
+            ? t('layout.collapse')
+            : t('layout.expand')
+          : app.sidebarCollapsed
+            ? t('layout.expand')
+            : t('layout.collapse')
+      "
       @click="emit('toggleSidebar')"
     >
       <AppIcon
-        :name="app.sidebarCollapsed ? 'PanelLeftOpen' : 'PanelLeftClose'"
+        :name="
+          props.mobile ? 'Menu' : app.sidebarCollapsed ? 'PanelLeftOpen' : 'PanelLeftClose'
+        "
         :size="17"
         fallback="Menu"
       />
@@ -158,6 +207,30 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
       </template>
     </el-dropdown>
 
+    <el-popover placement="bottom-end" :width="340" trigger="click" @show="loadTopNotices">
+      <template #reference>
+        <button type="button" class="app-header__icon-button" title="公告">
+          <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99">
+            <AppIcon name="Bell" :size="17" fallback="Bell" />
+          </el-badge>
+        </button>
+      </template>
+      <div class="app-header__notices">
+        <p v-if="topNotices.length === 0" class="app-header__notice-empty">暂无公告</p>
+        <button
+          v-for="item in topNotices"
+          :key="item.notice_id"
+          type="button"
+          class="app-header__notice"
+          @click="openNotice(item)"
+        >
+          <span class="app-header__notice-dot" :class="{ 'is-read': item.read }" />
+          <span class="app-header__notice-title">{{ item.notice_title }}</span>
+          <time class="app-header__notice-time">{{ formatDateTime(item.create_time) }}</time>
+        </button>
+      </div>
+    </el-popover>
+
     <el-dropdown trigger="click">
       <button type="button" class="app-header__user">
         <span class="app-header__avatar" aria-hidden="true">
@@ -171,12 +244,25 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <el-dropdown-item disabled>
             {{ t('dashboard.tenant') }}：#{{ auth.tenantId ?? '-' }}
           </el-dropdown-item>
-          <el-dropdown-item divided @click="signOut">
+          <el-dropdown-item divided @click="router.push('/profile')">
+            {{ t('layout.profile') }}
+          </el-dropdown-item>
+          <el-dropdown-item @click="signOut">
             {{ t('layout.logout') }}
           </el-dropdown-item>
         </el-dropdown-menu>
       </template>
     </el-dropdown>
+
+    <AppDrawer
+      v-model="noticeDrawer.visible"
+      :title="noticeDrawer.detail?.notice_title ?? '公告'"
+      size="520px"
+    >
+      <p class="app-header__notice-content">
+        {{ noticeDrawer.detail?.notice_content || '（无正文）' }}
+      </p>
+    </AppDrawer>
   </header>
 </template>
 
@@ -276,6 +362,72 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.app-header__notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ci-space-1);
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.app-header__notice-empty {
+  padding: var(--ci-space-4);
+  text-align: center;
+  font-size: var(--ci-text-sm);
+  color: var(--ci-color-text-tertiary);
+}
+
+.app-header__notice {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ci-space-2);
+  width: 100%;
+  padding: var(--ci-space-2) var(--ci-space-3);
+  border: none;
+  border-radius: var(--ci-radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--ci-transition-control);
+}
+
+.app-header__notice:hover {
+  background: var(--ci-color-surface-sunken);
+}
+
+.app-header__notice-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ci-color-accent);
+}
+
+.app-header__notice-dot.is-read {
+  background: transparent;
+  border: 1px solid var(--ci-color-separator);
+}
+
+.app-header__notice-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ci-text-sm);
+  color: var(--ci-color-text);
+}
+
+.app-header__notice-time {
+  font-size: var(--ci-text-xs);
+  color: var(--ci-color-text-tertiary);
+  white-space: nowrap;
+}
+
+.app-header__notice-content {
+  white-space: pre-wrap;
+  line-height: var(--ci-leading-relaxed);
+  color: var(--ci-color-text-secondary);
 }
 
 @media (max-width: 900px) {

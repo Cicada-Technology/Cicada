@@ -231,7 +231,7 @@ export const request: RequestClient = {
       options.filename ??
       filenameFromDisposition(typeof header === 'string' ? header : undefined) ??
       'download';
-    saveBlob(response.data, filename);
+    await saveBlob(response.data, filename);
   },
   async blob(url: string, config?: AxiosRequestConfig) {
     const response = await http.get<Blob>(url, { ...config, responseType: 'blob' });

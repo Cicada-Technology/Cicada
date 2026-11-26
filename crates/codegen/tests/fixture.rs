@@ -126,7 +126,7 @@ const FIXTURE_FILES: &[(&str, &str)] = &[
     ("dto.rs", "dto.rs"),
     ("handler.rs", "handler.rs"),
     ("module.rs", "module.rs"),
-    ("migration/m20261009_000008_goods.rs", "migration.rs"),
+    ("migrations/m20261009_000008_goods.rs", "migration.rs"),
 ];
 
 /// 树表样例的落盘文件（与单表一致：路径后缀 → fixtures 文件名）。
@@ -136,7 +136,7 @@ const FIXTURE_FILES_TREE: &[(&str, &str)] = &[
     ("dto.rs", "dto.rs"),
     ("handler.rs", "handler.rs"),
     ("module.rs", "module.rs"),
-    ("migration/m20261009_000009_category.rs", "migration.rs"),
+    ("migrations/m20261009_000009_category.rs", "migration.rs"),
 ];
 
 fn fixtures_dir() -> PathBuf {
@@ -225,12 +225,12 @@ fn renders_all_expected_artifacts() {
     let artifacts = render();
     let paths: Vec<&str> = artifacts.iter().map(|a| a.path.as_str()).collect();
     for expected in [
-        "migration/m20261009_000008_goods.rs",
-        "src/business/goods/mod.rs",
-        "src/business/goods/entity.rs",
-        "src/business/goods/dto.rs",
-        "src/business/goods/handler.rs",
-        "src/business/goods/module.rs",
+        "migrations/m20261009_000008_goods.rs",
+        "business/goods/mod.rs",
+        "business/goods/entity.rs",
+        "business/goods/dto.rs",
+        "business/goods/handler.rs",
+        "business/goods/module.rs",
         "web/src/api/business/goods.ts",
         "web/src/views/business/goods/index.vue",
         "sql/goods_menu.sql",
@@ -248,6 +248,25 @@ fn renders_all_expected_artifacts() {
             assert!(!a.content.contains(banned), "{} 含占位：{banned}", a.path);
         }
     }
+}
+
+#[test]
+fn generated_api_uses_full_route_and_page_result() {
+    let artifacts = render();
+    let api = artifacts
+        .iter()
+        .find(|a| a.path == "web/src/api/business/goods.ts")
+        .expect("api");
+    assert!(
+        api.content
+            .contains("import type { PageQuery, PageResult }")
+    );
+    assert!(api.content.contains("Promise<PageResult<GoodsVo>>"));
+    assert!(
+        api.content
+            .contains("request.get<PageResult<GoodsVo>>('/api/v1/business/goods'")
+    );
+    assert!(api.content.contains("`/api/v1/business/goods/${id}`"));
 }
 
 #[test]
@@ -272,19 +291,19 @@ fn bundles_into_a_zip() {
     // 读回中央目录：条目路径必须与产物一致（zip 可被解压工具识别）。
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip 应可读回");
     let mut names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().to_string())
         .collect();
     names.sort();
     assert_eq!(names, {
         let mut expected: Vec<&str> = vec![
             "README.md",
-            "migration/m20261009_000008_goods.rs",
+            "migrations/m20261009_000008_goods.rs",
             "sql/goods_menu.sql",
-            "src/business/goods/dto.rs",
-            "src/business/goods/entity.rs",
-            "src/business/goods/handler.rs",
-            "src/business/goods/mod.rs",
-            "src/business/goods/module.rs",
+            "business/goods/dto.rs",
+            "business/goods/entity.rs",
+            "business/goods/handler.rs",
+            "business/goods/mod.rs",
+            "business/goods/module.rs",
             "web/src/api/business/goods.ts",
             "web/src/views/business/goods/index.vue",
         ];
@@ -360,20 +379,10 @@ fn tree_renders_forest_endpoint_and_children() {
         .iter()
         .find(|a| a.path.ends_with(".ts"))
         .expect("api");
-    assert!(api.content.contains("/business/category/tree"));
-}
-
-#[test]
-fn refuses_sub_templates_for_now() {
-    let plan = build_plan(&sample_table(), &config(), TplCategory::Sub).expect("建计划");
-    let input = RenderInput {
-        plan: &plan,
-        date: "20261009".to_string(),
-        seq: "000008".to_string(),
-        route_prefix: "/api/v1".to_string(),
-        template_dir: None,
-    };
-    assert!(render_all(&input).is_err());
+    assert!(
+        api.content
+            .contains("request.get<CategoryVo[]>('/api/v1/business/category/tree'")
+    );
 }
 
 #[test]

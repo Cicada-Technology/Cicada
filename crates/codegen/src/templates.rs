@@ -43,32 +43,32 @@ macro_rules! tpl {
 pub const TEMPLATES: &[TemplateDef] = &[
     tpl!(
         "migration",
-        "migration/m{{ date }}_{{ seq }}_{{ business_name }}.rs",
+        "migrations/m{{ date }}_{{ seq }}_{{ business_name }}.rs",
         "migration.rs.j2"
     ),
     tpl!(
         "mod",
-        "src/{{ module_name }}/{{ business_name }}/mod.rs",
+        "{{ module_name }}/{{ business_name }}/mod.rs",
         "mod.rs.j2"
     ),
     tpl!(
         "entity",
-        "src/{{ module_name }}/{{ business_name }}/entity.rs",
+        "{{ module_name }}/{{ business_name }}/entity.rs",
         "entity.rs.j2"
     ),
     tpl!(
         "dto",
-        "src/{{ module_name }}/{{ business_name }}/dto.rs",
+        "{{ module_name }}/{{ business_name }}/dto.rs",
         "dto.rs.j2"
     ),
     tpl!(
         "handler",
-        "src/{{ module_name }}/{{ business_name }}/handler.rs",
+        "{{ module_name }}/{{ business_name }}/handler.rs",
         "handler.rs.j2"
     ),
     tpl!(
         "module",
-        "src/{{ module_name }}/{{ business_name }}/module.rs",
+        "{{ module_name }}/{{ business_name }}/module.rs",
         "module.rs.j2"
     ),
     tpl!(

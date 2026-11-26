@@ -185,6 +185,28 @@ pub async fn get_notice(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/system/notices/{notice_id}/mine",
+    params(("notice_id" = i64, Path, description = "公告 id")),
+    responses((status = 200, description = "公告详情（登录即可读）", body = NoticeVo), (status = 404, description = "不存在"))
+)]
+pub async fn get_notice_mine(
+    State(state): State<AppState>,
+    ctx: RequestContextExt,
+    Path(notice_id): Path<i64>,
+) -> Result<Json<NoticeVo>, ApiErr> {
+    if ctx.into_inner().principal.is_none() {
+        return Err(unauthorized());
+    }
+    let row = NoticeEntity::find_by_id(notice_id)
+        .one(state.db.conn())
+        .await
+        .map_err(db_error)?
+        .ok_or_else(not_found)?;
+    Ok(Json(NoticeVo::from(row)))
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/system/notices",
     request_body = NoticeUpsert,
@@ -342,7 +364,6 @@ pub async fn delete_notice(
     params(("notice_id" = i64, Path, description = "公告 id")),
     responses((status = 204, description = "已标记为已读"), (status = 404, description = "公告不存在"))
 )]
-#[require_perm("system:notice:list")]
 pub async fn mark_notice_read(
     State(state): State<AppState>,
     ctx: RequestContextExt,
@@ -561,10 +582,16 @@ pub fn routes(_state: AppState) -> Routes {
             delete_notice__perms(),
             delete_notice__audit(),
         )
+        // 个人视图：登录即可读详情、标记已读；管理页才需要 `system:notice:list`。
+        .route(
+            "/api/v1/system/notices/{notice_id}/mine",
+            get(get_notice_mine),
+            &[],
+        )
         .route(
             "/api/v1/system/notices/{notice_id}/read",
             post(mark_notice_read),
-            mark_notice_read__perms(),
+            &[],
         )
         .route(
             "/api/v1/system/notices/{notice_id}/readers",

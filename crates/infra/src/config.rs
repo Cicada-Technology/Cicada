@@ -82,7 +82,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            port: 8080,
+            port: 8081,
             body_limit_mb: 20,
             graceful_shutdown_secs: 30,
         }
@@ -127,7 +127,7 @@ impl Default for TenantConfig {
     }
 }
 
-/// 一条 OAuth2 / OIDC 登录提供方（「通用 OIDC 二期」、「微信扫码登录」）。
+/// 一条 OAuth2 / OIDC 登录提供方（微信扫码登录、通用 OIDC）。
 ///
 /// `kind = wechat` 走微信开放平台扫码（授权码 → `openid`/`unionid`）；
 /// `kind = oidc` 走通用授权码流程（令牌端点 + UserInfo，`sub` 作为标识）。
@@ -143,9 +143,13 @@ pub struct OAuthProviderConfig {
     pub authorize_url: String,
     pub token_url: String,
     pub userinfo_url: String,
-    /// 回调地址（必须是提供方控制台登记的那个完整 URL）；留空退化为相对路径。
+    /// 浏览器回调地址（必须是提供方控制台登记的那个完整 URL）；留空退化为相对路径。
     #[serde(default)]
     pub redirect_uri: String,
+    /// 原生客户端回调地址（提供方控制台登记的自定义 scheme，如
+    /// `cicada://oauth/callback`）；桌面、Android、iOS 共用；留空表示该提供方不支持原生登录。
+    #[serde(default)]
+    pub native_redirect_uri: String,
     /// 空表示按 `kind` 取默认值（`snsapi_login` / `openid profile email`）。
     #[serde(default)]
     pub scopes: Vec<String>,
@@ -311,8 +315,8 @@ impl Default for AuthConfig {
     }
 }
 
-/// 跨域（第 4 层 `cors`）：默认关闭（浏览器同源或走网关反向代理时不需要），
-/// 需要放行独立域名的前端时再开。
+/// 跨域（第 4 层 `cors`）：默认只放行 Tauri 桌面 origin；浏览器管理端同源部署时不需要 CORS，
+/// 独立域名的前端按需追加。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CorsConfig {
@@ -328,8 +332,14 @@ pub struct CorsConfig {
 impl Default for CorsConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            allowed_origins: Vec::new(),
+            // 浏览器管理端与后端同源（Vite/Nginx 反代）；桌面客户端（Tauri）是跨源，
+            // 因此默认只放行两个平台的 Tauri origin，凭据仍关闭（Bearer 不走 Cookie）。
+            enabled: true,
+            allowed_origins: vec![
+                "http://tauri.localhost".to_string(),
+                "https://tauri.localhost".to_string(),
+                "tauri://localhost".to_string(),
+            ],
             allow_credentials: false,
             max_age_secs: 3600,
         }
@@ -741,6 +751,9 @@ impl Config {
     /// 容器镜像刻意不烘 `default.yaml`（见 Dockerfile 末段），所以「一个文件都没有」
     /// 这条路径也走同一次合并——底就是代码默认值，开发与容器行为不分叉。
     pub fn load() -> Result<Self, ConfigError> {
+        // 本地开发可选 `.env`：不存在时静默跳过，环境变量仍由进程/容器注入。
+        // 放在读取 env 之前，配置文件里的 `${VAR}` 与 `DATABASE_URL` 才能看到它。
+        let _ = dotenvy::dotenv();
         let env = |k: &str| std::env::var(k).ok();
         let mut paths = vec![DEFAULT_FILE.to_string()];
         let profile = env(PROFILE_ENV).filter(|p| !p.trim().is_empty());
@@ -1229,7 +1242,7 @@ mod tests {
             Config::from_yaml_str("db: { url: \"postgres://u@h/db\", max_connections: 7 }")
                 .unwrap();
         assert_eq!(pinned.db.resolved_max_connections(), 7);
-        assert_eq!(cfg.server.port, 8080);
+        assert_eq!(cfg.server.port, 8081);
         assert_eq!(cfg.tenant.default_id, 1);
     }
 

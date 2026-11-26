@@ -54,12 +54,12 @@ COPY --from=builder /usr/local/bin/cicada-cli /usr/local/bin/cicada-cli
 # 上传与导出产物落这里；镜像本身不留状态（部署「应用实例不保存状态」）。
 VOLUME ["/app/data"]
 USER cicada
-EXPOSE 8080
+EXPOSE 8081
 
 # 探就绪而不是存活：`/healthz` 进程在就 200，测不出依赖挂了（可观测性）。
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
     # 端口可由 CICADA_SERVER_PORT 改（配置的环境变量覆写），探针必须跟着走，
     # 否则换个端口的部署会一直被报成 unhealthy。
-    CMD curl -fsS "http://127.0.0.1:${CICADA_SERVER_PORT:-8080}/readyz" || exit 1
+    CMD curl -fsS "http://127.0.0.1:${CICADA_SERVER_PORT:-8081}/readyz" || exit 1
 
 ENTRYPOINT ["cicada-server"]

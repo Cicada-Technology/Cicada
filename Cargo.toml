@@ -48,9 +48,9 @@ sea-orm-migration  = { version = "2.0.4", features = ["runtime-tokio", "sqlx-pos
 sea-query          = "1.0.2"
 argon2             = "0.6.0"
 # 富文本入库前的白名单清洗，见 crates/system/src/rich_text.rs。
-ammonia            = "4.2.4"
+ammonia            = "4.2.5"
 bcrypt             = "0.19.3"
-jsonwebtoken       = { version = "11.1.0", features = ["rust_crypto"] }
+jsonwebtoken       = { version = "12.0.0", features = ["rust_crypto"] }
 redis              = { version = "1.7.1", features = ["tokio-comp", "connection-manager"] }
 moka               = { version = "0.12.16", features = ["sync"] }
 sha2               = "0.10.9"
@@ -69,7 +69,7 @@ metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 serde_yaml         = "0.9"
 utoipa             = { version = "6.0.0", features = ["axum_extras", "chrono", "decimal", "uuid"] }
-utoipa-swagger-ui  = { version = "10.0.1", features = ["axum"] }
+utoipa-swagger-ui  = { version = "10.0.2", features = ["axum"] }
 # 链路：OTLP over HTTP/protobuf，只开 trace 通道，
 # 导出器复用已有的 reqwest（不引 tonic，避免重复的 hyper 栈）。
 opentelemetry           = "0.33.0"
@@ -79,7 +79,7 @@ tracing-opentelemetry   = "0.34.0"
 # utoipa             = "6.0.0"
 # utoipa-swagger-ui  = "10.0.1"
 minijinja          = { version = "2.24.0", features = ["loader", "json"] }
-lettre             = { version = "0.11.23", default-features = false, features = [
+lettre             = { version = "0.11.24", default-features = false, features = [
     # 技术选型：邮件走 lettre 的 SMTP transport。TLS 用 rustls，且显式选 aws-lc-rs——
     # 与 reqwest 用的同一个 rustls provider，避免出现两个默认加密后端（rustls 会在这种情况下
     # 直接拒绝取默认 provider）。`webpki-roots` 提供 Mozilla 根证书集，与部署的镜像一致。
@@ -97,8 +97,8 @@ opendal             = { version = "0.59.3", features = ["services-memory"] }
 # 0.59 起每个服务是独立 crate（opendal-core 只留 memory）：只引需要的三个。
 opendal-service-s3  = "0.59.3"
 opendal-service-oss = "0.59.3"
-rust_xlsxwriter    = { version = "0.99.1", features = ["constant_memory"] }
-calamine           = "0.36.1"
+rust_xlsxwriter    = { version = "0.104.0", features = ["constant_memory"] }
+calamine           = "0.38.0"
 tokio-cron-scheduler = "0.15.1"
 croner             = "3.0.0"
 apalis             = "0.7.4"
@@ -107,7 +107,7 @@ apalis-sql         = { version = "0.7.4", default-features = false, features = [
 captcha            = "1.0.0"
 totp-rs            = { version = "6.0.0", features = ["gen_secret", "otpauth"] }
 rust-i18n          = "4.2.4"
-zip                = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip                = { version = "9.0.5", default-features = false, features = ["deflate"] }
 log                = "0.4"
 thiserror          = "2.0"
 async-trait        = "0.1"

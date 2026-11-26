@@ -12,6 +12,7 @@ import { useRoute, useRouter } from 'vue-router';
 import AppIcon from '@/components/AppIcon.vue';
 import type { SidebarMenu } from '@/router/dynamic';
 import { useAppStore } from '@/stores/app';
+import { openExternalUrl } from '@/utils/native';
 
 const props = withDefaults(
   defineProps<{
@@ -42,7 +43,7 @@ function isExpanded(item: SidebarMenu): boolean {
 function toggle(item: SidebarMenu): void {
   if (item.children.length === 0) {
     if (item.external) {
-      window.open(item.path, '_blank', 'noopener,noreferrer');
+      void openExternalUrl(item.path).catch(() => undefined);
     } else {
       void router.push(item.path);
     }

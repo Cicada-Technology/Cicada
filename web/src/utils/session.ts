@@ -6,6 +6,7 @@
  * 于是令牌状态放在这个零依赖模块里，由 store 负责把它包装成响应式状态。
  */
 
+import { clearNativeTokens, isTauriApp, loadNativeTokens, saveNativeTokens } from './native';
 import { readStorage, removeStorage, writeStorage, STORAGE_KEYS } from './storage';
 
 export interface TokenPair {
@@ -48,8 +49,34 @@ export function hasSession(): boolean {
 export function setTokens(pair: TokenPair): void {
   accessToken = pair.accessToken;
   refreshToken = pair.refreshToken;
+  if (isTauriApp()) {
+    // 原生端优先落平台安全存储；不可用时异步降级到 localStorage。
+    removeStorage(STORAGE_KEYS.accessToken);
+    removeStorage(STORAGE_KEYS.refreshToken);
+    void saveNativeTokens(pair).then((ok) => {
+      if (ok) return;
+      writeStorage(STORAGE_KEYS.accessToken, pair.accessToken);
+      writeStorage(STORAGE_KEYS.refreshToken, pair.refreshToken);
+    });
+    return;
+  }
   writeStorage(STORAGE_KEYS.accessToken, accessToken);
   writeStorage(STORAGE_KEYS.refreshToken, refreshToken);
+}
+
+/**
+ * 原生端启动水合：在应用挂载前把平台安全存储里的令牌读回内存。
+ *
+ * 浏览器端是 no-op；令牌缺失时保持未登录，由路由守卫送登录页。
+ */
+export async function hydrateNativeSession(): Promise<void> {
+  if (!isTauriApp()) return;
+  const pair = await loadNativeTokens();
+  if (!pair) return;
+  accessToken = pair.accessToken;
+  refreshToken = pair.refreshToken;
+  removeStorage(STORAGE_KEYS.accessToken);
+  removeStorage(STORAGE_KEYS.refreshToken);
 }
 
 export function clearSession(reason: SessionEndReason = 'logout'): void {
@@ -57,6 +84,7 @@ export function clearSession(reason: SessionEndReason = 'logout'): void {
   refreshToken = '';
   removeStorage(STORAGE_KEYS.accessToken);
   removeStorage(STORAGE_KEYS.refreshToken);
+  if (isTauriApp()) void clearNativeTokens();
   // 只有「被动终止」才广播。注意这里**不要**加「有没有会话」的前置判断去过滤重复广播：
   // 订阅者（`main.ts` 的 `handleSessionLost`）本身可能就是被重复触发的（多标签页、
   // 并发 401），过滤会让后到的那次彻底没人收尾；幂等交给收尾函数自己做。

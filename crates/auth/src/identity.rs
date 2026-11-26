@@ -24,7 +24,7 @@ pub enum IdentityType {
     WeChatOpen,
     /// 微信小程序。
     WeChatMp,
-    /// 通用 OIDC / OAuth2 提供方（通用 OIDC 放二期）。
+    /// 通用 OIDC / OAuth2 提供方。
     Oidc,
 }
 

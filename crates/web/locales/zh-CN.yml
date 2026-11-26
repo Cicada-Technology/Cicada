@@ -13,6 +13,7 @@ user:
 auth:
   unauthorized: 未认证
   forbidden: 无权限
+  tenant_invalid: 租户不存在或已停用
   invalid_token: 令牌无效或过期
   session_expired: 会话已失效
   reauth_required: 登录环境已变化（设备或浏览器不同），请重新登录
@@ -23,6 +24,9 @@ auth:
   api_key_expired: 凭证已过期：%{name}
   api_key_unavailable: 凭证校验不可用
   session_store_unavailable: 会话存储不可用：%{detail}
+  password:
+    old_wrong: 当前密码不正确
+    same: 新密码不能与当前密码相同
   totp:
     required: 需要二次验证码
     invalid: 二次验证码错误
@@ -36,6 +40,8 @@ auth:
     invalid: 身份标识非法
   oauth:
     provider_not_found: 未知的登录提供方：%{provider}
+    native_unsupported: 提供方 %{provider} 未配置原生客户端回调地址
+    client_invalid: 客户端类型只能是 web 或 native
     state_invalid: 授权 state 无效或已过期
     upstream: 第三方登录上游失败：%{detail}
 common:

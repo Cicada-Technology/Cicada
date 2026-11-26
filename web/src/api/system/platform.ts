@@ -27,6 +27,10 @@ export interface TenantUpsert {
   status: number;
   package_id?: number | null;
   remark?: string | null;
+  /** 仅创建时使用：租户初始管理员账号。 */
+  admin_username?: string | null;
+  /** 仅创建时使用：租户初始管理员密码。 */
+  admin_password?: string | null;
 }
 
 /** 租户已用与上限（`GET /system/tenants/{id}/quota`）。 */

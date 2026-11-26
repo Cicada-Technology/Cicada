@@ -44,7 +44,7 @@ It is not a demo, and it is not a repository you fork. Framework crates are depe
 - **Compile-time correctness**: strongly typed IDs, typestate-based scoped queries, permission and audit macros. No reflection, no runtime string conventions. Missing permissions, tenant filters, or soft-delete filters are pushed to compile time or tests.
 - **Modular monolith**: L0–L4 layers with an enforced dependency direction (`deploy/check_layering.py`). Cross-module collaboration goes through `ports` and domain events, not shared implementations.
 - **Template-first, no fork**: `cicada new` generates a standalone project that depends on the framework. Business and framework code stay physically separate.
-- **Full stack and bilingual**: Rust REST API plus a Vue 3 admin UI, with Simplified Chinese and English UI/messages.
+- **Four surfaces**: Rust REST API, Vue 3 admin UI, and one Tauri 2 native client for desktop / Android / iOS. All reuse the same pages and REST contract; tokens live in platform secure storage, and OAuth completes in the system browser via a `cicada://` deep link. Error messages are bilingual, and the shell supports zh-CN / en-US.
 
 ## Capabilities
 
@@ -53,13 +53,13 @@ It is not a demo, and it is not a repository you fork. Framework crates are depe
 | **Authentication & sessions** | JWT + Redis sessions, refresh-token rotation, captcha, login lockout, TOTP, forced logout, online-session snapshots and history |
 | **RBAC** | Permission strings, menu tree, role merging, versioned authorization cache, startup-time permission reconciliation |
 | **Data scopes** | Five scopes (all / custom / own department / department and descendants / self only), typestate queries, optional PostgreSQL RLS fallback |
-| **Multi-tenancy** | `tenant_id` across entities and cache keys, tenant packages, seat/storage/QPS quotas, default tenant bootstrap |
+| **Multi-tenancy** | `tenant_id` across entities and cache keys, tenant packages, seat/storage/QPS quotas; tenant picker on login and transactional tenant provisioning with an initial admin |
 | **System domain** | Users, roles, menus, departments, posts, dictionaries, config, notices, online users, operation and login logs |
 | **Audit** | Operation/login logs and field-level change history; `outbox_event` + relay; monthly log partitions archived before deletion |
 | **File storage** | One `Storage` trait for local / RustFS / Alibaba Cloud OSS / S3; magic-number checks; one-time download tokens or presigned URLs |
-| **Notifications** | In-app, email (SMTP), and webhook channels; templates, channels, delivery records |
+| **Notifications** | Email (SMTP) / webhook / SMS / IM gateways; templates, channels, delivery records; notice read state and header bell |
 | **Scheduled jobs** | Cron triggers × inline/queued execution; cluster leader election prevents duplicate runs; online CRUD and execution logs |
-| **Code generation** | Infer entity / DTO / handler / module / migration / frontend page from a table; single-table and tree templates; overridable templates; generated code is compiled in CI |
+| **Code generation** | Infer entity / DTO / handler / module / migration / frontend page from a table; single-table and tree templates; overridable templates; Rust artifacts compile in CI and frontend artifacts are typechecked |
 | **Import/export** | Streaming import/export; large exports go through `sys_export_task`; 100k-row memory stability is covered by a test |
 | **Open API** | API keys with issue/verify/revoke and `scopes` mapped into the permission set |
 | **Request pipeline** | request_id, trace, security headers, CORS, gzip, body limits, per-IP token bucket + tenant QPS, idempotency keys |
@@ -142,10 +142,10 @@ flowchart TB
 # 1. Start dependencies (not the compose "server" service; run it with cargo below)
 docker compose up -d postgres redis
 
-# 2. Schema → seed → default tenant and admin
+# 2. Schema → default tenant/admin → seed (demo rows attach to the existing admin/tenant)
 cargo run -p cicada-cli -- migrate
-cargo run -p cicada-cli -- seed
 cargo run -p cicada-cli -- init-admin
+cargo run -p cicada-cli -- seed   # dict/config/menu + demo org/notice/packages
 
 # 3. Start the backend
 cargo run -p cicada-server
@@ -163,16 +163,35 @@ pnpm dev
 
 Open `http://localhost:5173`. The dev server proxies `/api` and `/auth` to `http://127.0.0.1:8081`, so no CORS setup is required.
 
+### Native client (Tauri: desktop + Android + iOS)
+
+```bash
+cd clients/app
+corepack pnpm install
+corepack pnpm dev        # desktop
+corepack pnpm build      # desktop installers
+corepack pnpm android:dev
+corepack pnpm android:build -- --apk
+corepack pnpm ios:dev    # macOS + Xcode only
+corepack pnpm ios:build
+```
+
+Desktop, Android, iOS and Web reuse the same `web/` pages and REST contract. The shell only adds
+platform secure storage (`dev.cicada.client`; Keychain, Android Keystore, etc.), file saving, and
+OAuth in the system browser returning via `cicada://oauth/callback`. See
+[`clients/app/README.md`](clients/app/README.md) for mobile prerequisites and signing.
+
 ### Everything in Docker
 
 ```bash
 docker compose up -d --build
 docker compose exec server cicada-cli migrate
-docker compose exec server cicada-cli seed
 docker compose exec server cicada-cli init-admin
+docker compose exec server cicada-cli seed
 ```
 
-The container listens on 8080 and is published on `http://localhost:8081`.
+The container listens on 8081 and is published on `http://localhost:8081`; the same-origin admin
+UI is served by the `web` service at `http://localhost:8088` (Nginx proxies `/api`, `/auth`, `/docs`).
 
 ### First login
 
@@ -224,6 +243,8 @@ apps/
 template/     Project template rendered by `cicada new`
 migrations/   sea-orm-migration project (builds schema from empty; append-only)
 web/          Vue 3 admin UI (built independently)
+clients/
+  app/        Tauri 2 + Rust + TS client (desktop + Android/iOS, reuses web/)
 config/       Layered configuration (default / profile / local)
 deploy/       Dockerfile, compose, init scripts, layering check
 docs/         Design docs, ADRs, upgrade guide, OpenAPI snapshot
@@ -234,7 +255,7 @@ docs/         Design docs, ADRs, upgrade guide, OpenAPI snapshot
 ```bash
 # Depend on a git tag (recommended)
 cargo run -p cicada-cli -- new my-app \
-  --cicada 'git = "https://github.com/<org>/cicada", tag = "v0.1.0"'
+  --cicada 'git = "https://github.com/Cicada-Technology/cicada", tag = "v0.1.0"'
 
 # Or depend on a local workspace while developing the framework
 cargo run -p cicada-cli -- new my-app --name my_app --cicada path=$PWD
@@ -244,14 +265,21 @@ cargo run --bin migrate -- up --seed --admin
 cargo run
 ```
 
-The generated project only owns:
+The generated project contains:
 
 - `business/`: business modules (where the code generator writes);
 - `migrations/`: business migrations;
 - `templates/`: code-generation template overrides;
-- `config/`: project configuration.
+- `config/`: project configuration;
+- `web/`: the same Vue admin UI (copied by `cicada new`);
+- `clients/app/`: the Tauri 2 native client (desktop + Android/iOS) reusing `web/`.
 
-Framework crates remain dependencies, so upgrades change only the version. If you have `cargo-generate`, `cargo generate --path template my-app` produces the same layout.
+Run `corepack pnpm android:init` (Android SDK/NDK) or, on macOS, `corepack pnpm ios:init`
+inside `clients/app` before the first mobile build so Tauri generates `gen/` for this project.
+
+Framework crates remain dependencies, so upgrades change only the version. `cargo-generate` only
+renders the Rust template and does not copy `web/` or `clients/app/`; use `cicada new` for the
+full-stack layout (or copy those two directories manually).
 
 ## Configuration
 
@@ -284,9 +312,8 @@ CICADA_STORAGE_ACCESS_KEY_SECRET=...
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+# Requires real PostgreSQL / Redis: docker compose up -d postgres redis
 cargo test --workspace
-
-# Requires real PostgreSQL / Redis
 cargo test --workspace -- --ignored
 cargo test -p cicada-migrations --test roundtrip -- --ignored
 
@@ -323,10 +350,9 @@ CICADA_OPENAPI_BLESS=1 cargo test -p cicada-web --test openapi_snapshot
 
 Current version: **0.1.0**. The core foundation is delivered:
 
-- ✅ Authentication, RBAC, data scopes, multi-tenancy, system domain, audit, storage, notifications, jobs, code generation, import/export, open API, observability, Vue admin UI;
-- ⏳ Kubernetes manifests and load-test baselines;
-- ⏳ Master-detail (`sub`) code-generation templates;
-- ⏳ A few frontend pages (form builder) are placeholders; server and data monitoring are implemented.
+- ✅ Authentication, RBAC, data scopes, multi-tenancy (login picker + provisioning), system domain, audit, storage, notifications, jobs, code generation, import/export, open API, observability;
+- ✅ Vue admin UI + Tauri 2 native client (desktop / Android / iOS); profile, self-service password, TOTP, file manager, export tasks, change history and the notice bell are closed loops;
+- Out of scope: Kubernetes, master-detail code generation and the form builder; their menus/claims have been removed.
 
 Migrations are append-only. Breaking changes to APIs and configuration are recorded in [`CHANGELOG.md`](CHANGELOG.md); upgrade steps live in [`docs/UPGRADE.md`](docs/UPGRADE.md).
 

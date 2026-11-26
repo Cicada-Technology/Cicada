@@ -121,4 +121,17 @@ defineProps<{
   gap: var(--ci-space-2);
   justify-content: flex-end;
 }
+
+@media (max-width: 680px) {
+  .app-page__header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--ci-space-2);
+  }
+
+  .app-page__actions {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+}
 </style>

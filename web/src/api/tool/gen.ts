@@ -8,7 +8,7 @@
 import type { PageQuery, PageResult } from '@/api/types';
 import { request } from '@/utils/request';
 
-/** 模板分类：单表 / 树表（主子表递延）。 */
+/** 模板分类：单表 / 树表。 */
 export const TPL_CATEGORY_OPTIONS = [
   { value: 'crud', label: '单表（增删改查）' },
   { value: 'tree', label: '树表（树形结构）' },
