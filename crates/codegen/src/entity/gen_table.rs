@@ -21,9 +21,6 @@ pub struct Model {
     pub business_name: String,
     pub function_name: String,
     pub function_author: String,
-    /// 主子表的子表名（`tpl_category = sub` 时使用）。
-    pub sub_table_name: Option<String>,
-    pub sub_table_fk_name: Option<String>,
     /// `crud` / `tree` / `sub`。
     pub tpl_category: String,
     /// 表单一行显示的列数。

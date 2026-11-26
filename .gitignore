@@ -5,7 +5,10 @@
 .vscode/
 .env
 config/local.yaml
-config/default.yaml
+clients/app/node_modules/
+clients/app/src-tauri/target/
+# 生成给 IDE 的 schema 是开发辅助；Android/iOS 工程本身要入库，由各自内部 .gitignore 排除构建产物。
+clients/app/src-tauri/gen/schemas/
 
 # 离线构建资产（各自准备，不入库）
 vendor/*.zip

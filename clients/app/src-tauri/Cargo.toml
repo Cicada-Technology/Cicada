@@ -1,0 +1,47 @@
+[package]
+name = "cicada-app"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[lib]
+name = "cicada_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+keyring-core = "1"
+base64 = "0.22"
+
+# 平台安全存储：每个平台只链接自己的实现（Android Keystore / Apple Keychain /
+# Windows Credential Manager / Linux Secret Service）。
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-native-keyring-store = "1"
+
+# 单实例转发只存在于桌面（Linux/Windows 的第二次启动会另起进程）。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+# `generate_context!` 展开时会引用 serde_json，但源码里没有显式路径；machete 看不到。
+[package.metadata.cargo-machete]
+ignored = ["serde_json"]
+
+# 独立 workspace：桌面壳不参与主 Rust workspace 的测试与发布节奏。
+[workspace]

@@ -5,6 +5,8 @@
  * RFC 5987 的 `filename*=UTF-8''…`（中文名），解析时必须优先它、再退回 `filename=`。
  */
 
+import { notifySuccess } from './feedback';
+
 const DEFAULT_FILENAME = 'download';
 
 export function filenameFromDisposition(disposition?: string | null): string | null {
@@ -21,7 +23,15 @@ export function filenameFromDisposition(disposition?: string | null): string | n
   return plain?.[1] ? plain[1].trim() : null;
 }
 
-export function saveBlob(blob: Blob, filename: string = DEFAULT_FILENAME): void {
+export async function saveBlob(blob: Blob, filename: string = DEFAULT_FILENAME): Promise<void> {
+  const { saveNativeFile } = await import('./native');
+  const saved = await saveNativeFile(filename, blob).catch(() => null);
+  if (saved) {
+    // 原生端不弹系统下载条：明确告诉用户已经落盘，避免「点了没反应」。
+    notifySuccess('文件已保存');
+    return;
+  }
+
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

@@ -13,6 +13,7 @@ pub mod menu;
 pub mod menu_registry;
 pub mod quota;
 pub mod rich_text;
+pub mod tenant_provisioning;
 
 pub use api_key::{
     ApiKeyError, ApiKeyService, IssuedKey, KEY_PREFIX_LEN, STATUS_ACTIVE as API_KEY_ACTIVE,
@@ -32,6 +33,9 @@ pub use menu::{MenuTreeNode, load_menu_tree};
 pub use menu_registry::DbMenuRegistry;
 pub use quota::{QuotaError, TenantQuota, TenantUsage};
 pub use rich_text::sanitize_html;
+pub use tenant_provisioning::{
+    NewTenant, ProvisionError, ProvisionedTenant, create_tenant_with_admin,
+};
 
 /// `sys_export_task.status`：Pending / Running / Done / Failed。
 pub const EXPORT_STATUS_PENDING: i16 = 0;

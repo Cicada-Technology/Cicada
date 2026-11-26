@@ -51,7 +51,11 @@ function toggleSidebar(): void {
     </AppDrawer>
 
     <div class="app-layout__main">
-      <AppHeader @toggle-sidebar="toggleSidebar" />
+      <AppHeader
+        :mobile="isMobile"
+        :drawer-open="drawerOpen"
+        @toggle-sidebar="toggleSidebar"
+      />
 
       <main class="app-layout__content">
         <div class="app-layout__container">

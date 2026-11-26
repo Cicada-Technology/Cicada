@@ -21,6 +21,14 @@ export interface NoticeVo {
   create_time: string;
 }
 
+export interface TopNoticeVo {
+  notice_id: number;
+  notice_title: string;
+  notice_type: number;
+  create_time: string;
+  read: boolean;
+}
+
 export interface NoticeListQuery extends PageQuery {
   notice_title?: string;
   notice_type?: number;
@@ -41,6 +49,19 @@ export function listNotices(params: NoticeListQuery): Promise<PageResult<NoticeV
 
 export function getNotice(noticeId: number): Promise<NoticeVo> {
   return request.get<NoticeVo>(`/api/v1/system/notices/${noticeId}`);
+}
+
+/** 顶栏公告：登录即可读，带当前用户已读标记。 */
+export function listTopNotices(limit = 10): Promise<TopNoticeVo[]> {
+  return request.get<TopNoticeVo[]>('/api/v1/system/notices/top', {
+    params: { limit },
+    silent: true,
+  });
+}
+
+/** 登录即可读的公告详情（不要求管理权限点）。 */
+export function getNoticeMine(noticeId: number): Promise<NoticeVo> {
+  return request.get<NoticeVo>(`/api/v1/system/notices/${noticeId}/mine`);
 }
 
 export function createNotice(data: NoticeUpsert): Promise<NoticeVo> {

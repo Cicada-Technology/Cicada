@@ -17,18 +17,14 @@ version = 2
 # 下面每一条都是「已知、已核过不可利用、且上游暂无可用修复版」的项，
 # 写清楚命中路径与移除条件；不要靠关规则遮掉。
 ignore = [
-    # rsa：`jsonwebtoken` 无条件引入（不按算法裁 feature），本项目 JWT 只用 EdDSA/HS256，
-    # 不碰 RSA 签验。上游 rsa 0.9.10 已是最新，0.10 修复版发布后移除。
-    "RUSTSEC-2023-0071",
     # unsafe-libyaml：`serde_yaml` 的传递依赖，只解析仓库内的 config/*.yaml（受控输入），
     # 不解析上传内容。serde_yaml 自身已停更，换 YAML 后端是独立决策（见待确认项）。
     "RUSTSEC-2024-0449",
-    # zip 三条都是「把压缩包解压到磁盘」才可利用：本项目只写包（codegen 生成下载）
-    # 与只读表（calamine 在内存里解析 .xlsx），从不调 extract*、不从包名落盘。
-    # zip 8.6.0 已是最新，等修复版发布后移除。
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
+    # chrono / chrono-tz：RustSec 标记为 unmaintained（无修复版本）。本项目的时间处理
+    # 只做 UTC 时间戳与 SeaORM 映射，不涉及时区规则计算；替换为 jiff/time 需要同步
+    # SeaORM 生态，作为独立升级项跟踪，不阻塞当前安全门禁。
+    "RUSTSEC-2026-0543",
+    "RUSTSEC-2026-0555",
 ]
 
 [licenses]

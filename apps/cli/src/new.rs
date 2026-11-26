@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use crate::flag;
 
 /// 默认 cicada 依赖来源：git tag。用 `--cicada` 换成本地工作区（`path=<工作区根>`）或别的 tag。
-const DEFAULT_CICADA_DEP: &str = r#"git = "https://github.com/cicada-rs/cicada", tag = "v0.1.0""#;
+const DEFAULT_CICADA_DEP: &str =
+    r#"git = "https://github.com/Cicada-Technology/cicada", tag = "v0.1.0""#;
 
 /// 模板里直接引用 crate 名的那几个依赖对应的目录（相对工作区根）。
 ///
@@ -32,6 +33,13 @@ const DEFAULT_TEMPLATE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../t
 
 /// 模板里不该出现在使用者工程里的文件。
 const SKIP: [&str; 1] = ["cargo-generate.toml"];
+
+/// 前端骨架里不进入生成工程的重目录（依赖与构建产物）。
+const WEB_SKIP_DIRS: [&str; 2] = ["node_modules", "dist"];
+
+/// Tauri 客户端里不进入生成工程的重目录（依赖、Rust target 与生成 schema/工程）。
+/// `gen/` 里是 Tauri 按本仓库标识生成的 Android/iOS 工程，新工程必须用自己的标识重新 init。
+const APP_SKIP_DIRS: [&str; 3] = ["node_modules", "target", "gen"];
 
 #[derive(Debug)]
 pub struct NewOptions {
@@ -159,6 +167,180 @@ pub fn render(opts: &NewOptions) -> Result<usize, String> {
             written += 1;
         }
     }
+    written += copy_web(src_root, &opts.dir, &opts.name)?;
+    written += copy_app(src_root, &opts.dir, &opts.name)?;
+    Ok(written)
+}
+
+/// 把框架的 `web/` 复制到使用者工程，并改掉包名。
+///
+/// 前端是同一份 Vue 管理端：代码生成器产出的 `web/src/...` 只有落在它里面才能
+/// 直接构建。`cargo generate --path template` 不会执行这一步，模板 README 会说明。
+fn copy_web(
+    src_root: &std::path::Path,
+    target_dir: &std::path::Path,
+    name: &str,
+) -> Result<usize, String> {
+    let Some(repo_root) = src_root.parent() else {
+        return Ok(0);
+    };
+    copy_tree(
+        &repo_root.join("web"),
+        &target_dir.join("web"),
+        &WEB_SKIP_DIRS,
+        Some(&format!("{name}-web")),
+    )
+}
+
+fn copy_app(
+    src_root: &std::path::Path,
+    target_dir: &std::path::Path,
+    name: &str,
+) -> Result<usize, String> {
+    let Some(repo_root) = src_root.parent() else {
+        return Ok(0);
+    };
+    let written = copy_tree(
+        &repo_root.join("clients/app"),
+        &target_dir.join("clients/app"),
+        &APP_SKIP_DIRS,
+        None,
+    )?;
+    rewrite_app_identity(target_dir, name)?;
+    Ok(written)
+}
+
+/// 生成工程不能沿用框架的 identifier / deep-link scheme / keyring service：
+/// 两个生成应用同时安装会撞包，深链也会互相抢。新工程按自己的名字重写这几处。
+fn rewrite_app_identity(target_dir: &std::path::Path, name: &str) -> Result<(), String> {
+    let id = app_slug(name);
+    let scheme = id.replace('_', "-");
+    let app_id = format!("dev.{id}.client");
+    let replacements: &[(&str, String)] = &[
+        ("dev.cicada.client", app_id.clone()),
+        (
+            "\"productName\": \"cicada\"",
+            format!("\"productName\": \"{name}\""),
+        ),
+        (
+            "\"name\": \"cicada-app\"",
+            format!("\"name\": \"{id}-app\""),
+        ),
+        ("cicada://", format!("{scheme}://")),
+        (
+            "\"schemes\": [\"cicada\"]",
+            format!("\"schemes\": [\"{scheme}\"]"),
+        ),
+        (
+            "\"scheme\": [\"cicada\"]",
+            format!("\"scheme\": [\"{scheme}\"]"),
+        ),
+        (
+            "url.scheme() != \"cicada\"",
+            format!("url.scheme() != \"{scheme}\""),
+        ),
+        (
+            "parsed.protocol !== 'cicada:'",
+            format!("parsed.protocol !== '{scheme}:'"),
+        ),
+    ];
+    for rel in [
+        "clients/app/package.json",
+        "clients/app/README.md",
+        "clients/app/src-tauri/tauri.conf.json",
+        "clients/app/src-tauri/src/lib.rs",
+        "web/src/utils/native.ts",
+        "config/default.yaml",
+    ] {
+        let path = target_dir.join(rel);
+        if !path.is_file() {
+            continue;
+        }
+        let mut text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{} 读取失败：{e}", path.display()))?;
+        for (from, to) in replacements {
+            text = text.replace(from, to);
+        }
+        std::fs::write(&path, text).map_err(|e| format!("{} 写入失败：{e}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// 小写、只留字母数字和下划线；保证首字符是字母（Android applicationId 的约束）。
+fn app_slug(name: &str) -> String {
+    let mut slug: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    while slug.contains("__") {
+        slug = slug.replace("__", "_");
+    }
+    let slug = slug.trim_matches('_').to_string();
+    if slug.is_empty() {
+        return "app".to_string();
+    }
+    match slug.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() => slug,
+        _ => format!("app_{slug}"),
+    }
+}
+
+fn copy_tree(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+    skip_dirs: &[&str],
+    package_name: Option<&str>,
+) -> Result<usize, String> {
+    if !src.is_dir() {
+        return Ok(0);
+    }
+    let mut written = 0;
+    let mut stack = vec![src.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries =
+            std::fs::read_dir(&dir).map_err(|e| format!("读取 {} 失败：{e}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(src)
+                .map_err(|e| e.to_string())?
+                .to_path_buf();
+            if rel
+                .components()
+                .any(|c| skip_dirs.iter().any(|skip| c.as_os_str() == *skip))
+            {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let target = dest.join(&rel);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            match (rel == std::path::Path::new("package.json"), package_name) {
+                (true, Some(name)) => {
+                    let text = std::fs::read_to_string(&path)
+                        .map_err(|e| format!("{} 不是 UTF-8：{e}", path.display()))?;
+                    let text =
+                        text.replace("\"name\": \"cicada-web\"", &format!("\"name\": \"{name}\""));
+                    std::fs::write(&target, text).map_err(|e| e.to_string())?;
+                }
+                _ => {
+                    std::fs::copy(&path, &target).map_err(|e| e.to_string())?;
+                }
+            }
+            written += 1;
+        }
+    }
     Ok(written)
 }
 
@@ -258,9 +440,28 @@ mod tests {
         assert_eq!(leftovers(&main), Vec::<String>::new());
         // 模板自身的元数据不进产物。
         assert!(!dir.join("cargo-generate.toml").exists());
-        // 业务代码与迁移都在。
+        // 业务代码、迁移与前端骨架都在。
         assert!(dir.join("business/goods/module.rs").exists());
         assert!(dir.join("migrations/mod.rs").exists());
+        assert!(dir.join("web/src/main.ts").exists());
+        assert!(dir.join("clients/app/src-tauri/Cargo.toml").exists());
+        let web_pkg = std::fs::read_to_string(dir.join("web/package.json")).unwrap();
+        assert!(web_pkg.contains("\"name\": \"my-app-web\""), "{web_pkg}");
+        // 桌面/移动壳的身份按工程名重写：包名、keyring 服务与 deep-link scheme 不能沿用框架。
+        let app_conf =
+            std::fs::read_to_string(dir.join("clients/app/src-tauri/tauri.conf.json")).unwrap();
+        assert!(
+            app_conf.contains("\"identifier\": \"dev.my_app.client\""),
+            "{app_conf}"
+        );
+        assert!(app_conf.contains("\"scheme\": [\"my-app\"]"), "{app_conf}");
+        let shell = std::fs::read_to_string(dir.join("clients/app/src-tauri/src/lib.rs")).unwrap();
+        assert!(
+            shell.contains("KEYRING_SERVICE: &str = \"dev.my_app.client\""),
+            "{shell}"
+        );
+        let native = std::fs::read_to_string(dir.join("web/src/utils/native.ts")).unwrap();
+        assert!(native.contains("parsed.protocol !== 'my-app:'"), "{native}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

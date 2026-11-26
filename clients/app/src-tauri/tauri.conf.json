@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "cicada",
+  "version": "0.1.0",
+  "identifier": "dev.cicada.client",
+  "build": {
+    "beforeDevCommand": "corepack pnpm@10.34.5 --dir ../../web dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "corepack pnpm@10.34.5 --dir ../../web build:desktop",
+    "frontendDist": "../../../web/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "cicada",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 1024,
+        "minHeight": 720,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:8081 http://localhost:8081 http://10.0.2.2:8081 https://*"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["cicada"]
+      },
+      "mobile": [
+        {
+          "scheme": ["cicada"]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

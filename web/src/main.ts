@@ -21,8 +21,12 @@ import { router } from '@/router';
 import { LOGIN_PATH } from '@/router/guard';
 import { useAuthStore } from '@/stores/auth';
 import { usePermissionStore } from '@/stores/permission';
+import { initNativeOAuth } from '@/utils/native';
 import { notifyWarning } from '@/utils/feedback';
-import { onSessionCleared } from '@/utils/session';
+import { hydrateNativeSession, onSessionCleared } from '@/utils/session';
+
+// 原生端先把平台安全存储里的令牌水合进内存；浏览器端立即返回。
+await hydrateNativeSession();
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -31,6 +35,9 @@ app.use(pinia);
 app.use(i18n);
 app.use(router);
 app.use(ElementPlus);
+
+// 原生端（桌面/Android/iOS）：把 `cicada://oauth/callback`（含冷启动参数）接成应用内路由。
+await initNativeOAuth(router);
 
 // `v-perm` / `v-hasPermi` / `v-hasRole`：前端侧的入口显隐。
 // 它只是界面便利，真正的判定永远在后端。

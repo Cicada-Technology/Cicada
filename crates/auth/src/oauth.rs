@@ -1,4 +1,4 @@
-//! OAuth2 / OIDC 登录（微信扫码登录、「通用 OIDC 放二期」）。
+//! OAuth2 / OIDC 登录（微信开放平台扫码 + 通用 OIDC 授权码流程）。
 //!
 //! 结构遵循  的缝纪律：**提供方协议在端口（`OAuthClient`）后面**，
 //! 生产用 [`HttpOAuthClient`]，测试用 [`RecordingOAuthClient`]，编排（[`OAuthService`]）
@@ -74,14 +74,48 @@ pub struct ExternalIdentity {
     pub email: Option<String>,
 }
 
+/// 发起登录的客户端类型。
+///
+/// 回调地址随客户端不同：浏览器落在管理端页面，Tauri 原生客户端（桌面/Android/iOS）
+/// 落在 `cicada://` 自定义 scheme。`state` 仍由服务端一次性登记，客户端类型不参与信任判定。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OAuthClientKind {
+    /// 浏览器 / 管理端页面。
+    #[default]
+    Web,
+    /// Tauri 原生客户端（系统浏览器授权 → deep link 回传）。
+    Native,
+}
+
+impl OAuthClientKind {
+    /// 解析 `client` 参数；未知值返回 `None`（调用方按参数校验失败处理）。
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "web" => Some(Self::Web),
+            "native" => Some(Self::Native),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Web => "web",
+            Self::Native => "native",
+        }
+    }
+}
+
 /// 提供方协议端口。
 #[async_trait]
 pub trait OAuthClient: Send + Sync + 'static {
     /// 用授权码换外部身份（内部完成「换令牌 + 拉用户信息」）。
+    ///
+    /// `redirect_uri` 必须与授权请求里的值逐字一致（OIDC 令牌端点会核对）。
     async fn exchange(
         &self,
         provider: &OAuthProviderConfig,
         code: &str,
+        redirect_uri: &str,
     ) -> Result<ExternalIdentity, AuthError>;
 }
 
@@ -252,6 +286,7 @@ impl HttpOAuthClient {
         &self,
         provider: &OAuthProviderConfig,
         code: &str,
+        redirect_uri: &str,
     ) -> Result<ExternalIdentity, AuthError> {
         let token: Value = self
             .http
@@ -259,7 +294,7 @@ impl HttpOAuthClient {
             .form(&[
                 ("grant_type", "authorization_code".to_string()),
                 ("code", code.to_string()),
-                ("redirect_uri", redirect_uri(provider)),
+                ("redirect_uri", redirect_uri.to_string()),
                 ("client_id", provider.client_id.clone()),
                 (
                     "client_secret",
@@ -324,10 +359,12 @@ impl OAuthClient for HttpOAuthClient {
         &self,
         provider: &OAuthProviderConfig,
         code: &str,
+        redirect_uri: &str,
     ) -> Result<ExternalIdentity, AuthError> {
         match ProviderKind::parse(&provider.kind) {
+            // 微信的 access_token 端点不校验 redirect_uri（扫码授权时已经带过）。
             Some(ProviderKind::WeChat) => self.exchange_wechat(provider, code).await,
-            Some(ProviderKind::Oidc) => self.exchange_oidc(provider, code).await,
+            Some(ProviderKind::Oidc) => self.exchange_oidc(provider, code, redirect_uri).await,
             None => Err(AuthError::OAuthProviderNotFound(provider.code.clone())),
         }
     }
@@ -366,6 +403,7 @@ fn wechat_error(v: &Value) -> Option<String> {
 pub struct RecordingOAuthClient {
     identities: Vec<(String, ExternalIdentity)>,
     calls: Mutex<Vec<(String, String)>>,
+    redirects: Mutex<Vec<String>>,
 }
 
 impl RecordingOAuthClient {
@@ -373,12 +411,18 @@ impl RecordingOAuthClient {
         Self {
             identities,
             calls: Mutex::new(Vec::new()),
+            redirects: Mutex::new(Vec::new()),
         }
     }
 
     /// 已发生的调用：(provider code, code)。
     pub fn calls(&self) -> Vec<(String, String)> {
         self.calls.lock().expect("调用记录锁中毒").clone()
+    }
+
+    /// 每次令牌交换使用的 `redirect_uri`（用于断言原生端用的是自定义 scheme）。
+    pub fn redirects(&self) -> Vec<String> {
+        self.redirects.lock().expect("回调记录锁中毒").clone()
     }
 }
 
@@ -388,11 +432,16 @@ impl OAuthClient for RecordingOAuthClient {
         &self,
         provider: &OAuthProviderConfig,
         code: &str,
+        redirect_uri: &str,
     ) -> Result<ExternalIdentity, AuthError> {
         self.calls
             .lock()
             .expect("调用记录锁中毒")
             .push((provider.code.clone(), code.to_string()));
+        self.redirects
+            .lock()
+            .expect("回调记录锁中毒")
+            .push(redirect_uri.to_string());
         self.identities
             .iter()
             .find(|(c, _)| c == code)
@@ -462,21 +511,32 @@ impl OAuthService {
         self.providers.iter().find(|p| p.code == code)
     }
 
+    /// 已配置的提供方（只含公开标识；凭据不离开 `OAuthProviderConfig` 内部）。
+    pub fn providers(&self) -> &[OAuthProviderConfig] {
+        &self.providers
+    }
+
     pub fn ticket_ttl_secs(&self) -> u64 {
         self.ticket_ttl_secs
     }
 
     /// 生成授权地址并登记一次性 `state`。
-    pub async fn authorize_url(&self, provider_code: &str) -> Result<AuthorizeRequest, AuthError> {
+    pub async fn authorize_url(
+        &self,
+        provider_code: &str,
+        client: OAuthClientKind,
+    ) -> Result<AuthorizeRequest, AuthError> {
         let provider = self
             .provider(provider_code)
             .ok_or_else(|| AuthError::OAuthProviderNotFound(provider_code.to_string()))?;
+        // 先校验客户端回调可用，再登记 state：配置缺失时不该留下无法消费的 state。
+        redirect_uri(provider, client)?;
         let state = uuid::Uuid::new_v4().simple().to_string();
         self.states
             .issue(&state, provider_code, self.state_ttl_secs)
             .await?;
         Ok(AuthorizeRequest {
-            authorize_url: authorize_url(provider, &state)?,
+            authorize_url: authorize_url(provider, &state, client)?,
             state,
         })
     }
@@ -493,16 +553,18 @@ impl OAuthService {
         provider_code: &str,
         code: &str,
         state: &str,
+        client: OAuthClientKind,
         ip: &str,
         user_agent: &str,
     ) -> Result<OAuthLoginOutcome, AuthError> {
         let provider = self
             .provider(provider_code)
             .ok_or_else(|| AuthError::OAuthProviderNotFound(provider_code.to_string()))?;
+        let redirect = redirect_uri(provider, client)?;
         if !self.states.consume(state, provider_code).await? {
             return Err(AuthError::OAuthStateInvalid);
         }
-        let identity = self.client.exchange(provider, code).await?;
+        let identity = self.client.exchange(provider, code, &redirect).await?;
 
         let Some(user_id) =
             find_identity_user(db, tenant, identity.identity_type, &identity.identifier).await?
@@ -561,20 +623,38 @@ impl OAuthService {
     }
 }
 
-/// 回调地址：配置里显式给出的公开地址（必须是提供方控制台登记的那个）；
-/// 留空时退化为相对路径，仅同源开发场景可用。
-pub fn redirect_uri(provider: &OAuthProviderConfig) -> String {
-    if provider.redirect_uri.is_empty() {
-        format!("/auth/login/{}/callback", provider.code)
-    } else {
-        provider.redirect_uri.clone()
+/// 回调地址：浏览器用页面地址，原生端用已登记的自定义 scheme。
+///
+/// Web 留空时退化为相对路径（仅同源开发场景可用）；原生端没有显式配置就拒绝，
+/// 不会静默回落到浏览器地址。
+pub fn redirect_uri(
+    provider: &OAuthProviderConfig,
+    client: OAuthClientKind,
+) -> Result<String, AuthError> {
+    match client {
+        OAuthClientKind::Web => Ok(if provider.redirect_uri.is_empty() {
+            format!("/auth/login/{}/callback", provider.code)
+        } else {
+            provider.redirect_uri.clone()
+        }),
+        OAuthClientKind::Native => {
+            if provider.native_redirect_uri.is_empty() {
+                return Err(AuthError::OAuthNativeUnsupported(provider.code.clone()));
+            }
+            Ok(provider.native_redirect_uri.clone())
+        }
     }
 }
 
 /// 构造授权地址（`state` 必带，供提供方原样回传）。
-pub fn authorize_url(provider: &OAuthProviderConfig, state: &str) -> Result<String, AuthError> {
+pub fn authorize_url(
+    provider: &OAuthProviderConfig,
+    state: &str,
+    client: OAuthClientKind,
+) -> Result<String, AuthError> {
     let kind = ProviderKind::parse(&provider.kind)
         .ok_or_else(|| AuthError::OAuthProviderNotFound(provider.code.clone()))?;
+    let redirect = redirect_uri(provider, client)?;
     let scope = if provider.scopes.is_empty() {
         kind.default_scope().to_string()
     } else {
@@ -594,7 +674,7 @@ pub fn authorize_url(provider: &OAuthProviderConfig, state: &str) -> Result<Stri
         "{}{sep}{id_param}={}&redirect_uri={}&response_type=code&scope={}&state={}",
         provider.authorize_url,
         urlencode(&provider.client_id),
-        urlencode(&redirect_uri(provider)),
+        urlencode(&redirect),
         urlencode(&scope),
         urlencode(state),
     );
@@ -740,6 +820,7 @@ mod tests {
             token_url: "https://idp.example/token".to_string(),
             userinfo_url: "https://idp.example/userinfo".to_string(),
             redirect_uri: "https://api.example/auth/login/x/callback".to_string(),
+            native_redirect_uri: String::new(),
             scopes: Vec::new(),
             identity_type: None,
         }
@@ -747,7 +828,8 @@ mod tests {
 
     #[test]
     fn oidc_authorize_url_carries_state_and_scope() {
-        let url = authorize_url(&provider("oidc", "keycloak"), "s-123").unwrap();
+        let url =
+            authorize_url(&provider("oidc", "keycloak"), "s-123", OAuthClientKind::Web).unwrap();
         assert!(url.starts_with("https://idp.example/authorize?"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("client_id=cid"));
@@ -759,8 +841,25 @@ mod tests {
     }
 
     #[test]
+    fn native_authorize_url_uses_registered_scheme() {
+        let mut p = provider("oidc", "keycloak");
+        p.native_redirect_uri = "cicada://oauth/callback".to_string();
+        let url = authorize_url(&p, "s-1", OAuthClientKind::Native).unwrap();
+        assert!(url.contains("redirect_uri=cicada%3A%2F%2Foauth%2Fcallback"));
+        assert!(url.contains("state=s-1"));
+
+        // 未配置原生回调 → 明确拒绝，而不是回落到浏览器地址。
+        p.native_redirect_uri.clear();
+        assert!(matches!(
+            authorize_url(&p, "s-1", OAuthClientKind::Native),
+            Err(AuthError::OAuthNativeUnsupported(_))
+        ));
+    }
+
+    #[test]
     fn wechat_authorize_url_uses_appid_and_anchor() {
-        let url = authorize_url(&provider("wechat", "wechat"), "s-1").unwrap();
+        let url =
+            authorize_url(&provider("wechat", "wechat"), "s-1", OAuthClientKind::Web).unwrap();
         assert!(url.contains("appid=cid"));
         assert!(url.contains("scope=snsapi_login"));
         assert!(url.ends_with("#wechat_redirect"));
@@ -768,7 +867,7 @@ mod tests {
 
     #[test]
     fn unknown_kind_is_rejected() {
-        assert!(authorize_url(&provider("saml", "x"), "s").is_err());
+        assert!(authorize_url(&provider("saml", "x"), "s", OAuthClientKind::Web).is_err());
     }
 
     #[tokio::test]
@@ -800,12 +899,20 @@ mod tests {
             60,
             60,
         );
-        let req = svc.authorize_url("keycloak").await.unwrap();
+        let req = svc
+            .authorize_url("keycloak", OAuthClientKind::Web)
+            .await
+            .unwrap();
         assert!(req.authorize_url.contains(&req.state));
         // 未配置的提供方 → 404 语义的错误。
         assert!(matches!(
-            svc.authorize_url("wechat").await,
+            svc.authorize_url("wechat", OAuthClientKind::Web).await,
             Err(AuthError::OAuthProviderNotFound(_))
+        ));
+        // 未配置原生回调 → 422 语义的错误，且不留下 state。
+        assert!(matches!(
+            svc.authorize_url("keycloak", OAuthClientKind::Native).await,
+            Err(AuthError::OAuthNativeUnsupported(_))
         ));
     }
 

@@ -13,7 +13,7 @@ const SCHEMA: &str = "sys_menu_registry_test";
 
 fn url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://cicada:2025%40hanmole@localhost:5432/cicada".to_string())
+        .unwrap_or_else(|_| "postgres://cicada:2026%40cicada@localhost:5432/cicada".to_string())
 }
 
 async fn connect(schema: Option<&str>) -> DatabaseConnection {

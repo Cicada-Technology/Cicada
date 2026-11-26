@@ -10,7 +10,7 @@ use sea_orm::ConnectionTrait;
 /// 与仓库其它 DB 测试一致：优先 `DATABASE_URL`，否则用本机开发库。
 fn url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://cicada:2025%40hanmole@localhost:5432/cicada".to_string())
+        .unwrap_or_else(|_| "postgres://cicada:2026%40cicada@localhost:5432/cicada".to_string())
 }
 
 async fn connect() -> Db {

@@ -19,6 +19,12 @@ export const staticRoutes: RouteRecordRaw[] = [
     meta: { title: '登录', public: true },
   },
   {
+    path: '/oauth/callback',
+    name: 'oauth-callback',
+    component: () => import('@/views/oauth/callback.vue'),
+    meta: { title: '第三方登录', public: true },
+  },
+  {
     path: '/',
     component: AppLayout,
     redirect: HOME_PATH,
@@ -28,6 +34,12 @@ export const staticRoutes: RouteRecordRaw[] = [
         name: 'dashboard',
         component: () => import('@/views/dashboard/index.vue'),
         meta: { title: '概览', icon: 'HomeFilled', keepAlive: true },
+      },
+      {
+        path: 'profile',
+        name: 'profile',
+        component: () => import('@/views/profile/index.vue'),
+        meta: { title: '个人信息' },
       },
     ],
   },

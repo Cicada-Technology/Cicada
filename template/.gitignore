@@ -1,4 +1,9 @@
 /target
 /data
 .env
-config/default.local.yaml
+config/local.yaml
+web/node_modules
+web/dist
+clients/app/node_modules
+clients/app/src-tauri/target
+clients/app/src-tauri/gen/schemas

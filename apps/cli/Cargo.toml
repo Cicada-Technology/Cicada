@@ -10,5 +10,6 @@ cicada-migrations = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 cicada-codegen = { workspace = true }
+cicada-system = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }

@@ -12,6 +12,7 @@ user:
 auth:
   unauthorized: Unauthenticated
   forbidden: Access denied
+  tenant_invalid: Tenant does not exist or is disabled
   invalid_token: Invalid or expired token
   session_expired: Session has expired
   reauth_required: Sign-in context changed (different device or browser); please sign in again
@@ -22,6 +23,9 @@ auth:
   api_key_expired: "Credential has expired: %{name}"
   api_key_unavailable: Credential verification is unavailable
   session_store_unavailable: "Session store is unavailable: %{detail}"
+  password:
+    old_wrong: Current password is incorrect
+    same: New password must differ from the current password
   totp:
     required: Second-factor code required
     invalid: Invalid second-factor code
@@ -35,6 +39,8 @@ auth:
     invalid: Invalid identity identifier
   oauth:
     provider_not_found: "Unknown login provider: %{provider}"
+    native_unsupported: "Provider %{provider} has no native redirect URI configured"
+    client_invalid: "Client must be either web or native"
     state_invalid: Invalid or expired OAuth state
     upstream: "Third-party sign-in upstream failure: %{detail}"
 common:

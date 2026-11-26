@@ -237,7 +237,7 @@
       "AuthorizeUrlResponse": {
         "properties": {
           "authorize_url": {
-            "description": "浏览器/内嵌页直接打开的授权地址。",
+            "description": "浏览器/桌面端交给系统浏览器直接打开的授权地址。",
             "type": "string"
           },
           "state": {
@@ -469,6 +469,13 @@
       },
       "CallbackRequest": {
         "properties": {
+          "client": {
+            "description": "与发起授权时一致：`web`（默认）或 `native`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "code": {
             "type": "string"
           },
@@ -533,6 +540,21 @@
           "captcha_id",
           "img",
           "enabled"
+        ],
+        "type": "object"
+      },
+      "ChangePasswordRequest": {
+        "properties": {
+          "new_password": {
+            "type": "string"
+          },
+          "old_password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "old_password",
+          "new_password"
         ],
         "type": "object"
       },
@@ -2040,7 +2062,7 @@
             "type": "array"
           },
           "tpl_category": {
-            "description": "`crud` / `tree` / `sub`，缺省 `crud`。",
+            "description": "`crud` / `tree`，缺省 `crud`。",
             "type": [
               "string",
               "null"
@@ -2558,6 +2580,14 @@
           "password": {
             "type": "string"
           },
+          "tenant_id": {
+            "description": "目标租户 id；缺省使用 `tenant.default_id`。多租户前端从 `/auth/tenants` 选择。",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "totp": {
             "description": "启用 TOTP 的账号在此携带 6 位动态码。",
             "type": [
@@ -2602,6 +2632,22 @@
           "user_id",
           "tenant_id",
           "username"
+        ],
+        "type": "object"
+      },
+      "LoginTenantVo": {
+        "properties": {
+          "tenant_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tenant_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "tenant_name"
         ],
         "type": "object"
       },
@@ -2929,6 +2975,21 @@
           "notice_type",
           "status",
           "create_time"
+        ],
+        "type": "object"
+      },
+      "OAuthProviderVo": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "kind"
         ],
         "type": "object"
       },
@@ -3622,11 +3683,26 @@
       },
       "ProfileResponse": {
         "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nick_name": {
+            "type": "string"
+          },
           "permissions": {
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "phonenumber": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "roles": {
             "items": {
@@ -3649,6 +3725,7 @@
         "required": [
           "user_id",
           "user_name",
+          "nick_name",
           "tenant_id",
           "roles",
           "permissions"
@@ -4573,6 +4650,20 @@
       },
       "TenantUpsert": {
         "properties": {
+          "admin_password": {
+            "description": "仅创建时使用：租户初始管理员密码。更新时忽略。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "admin_username": {
+            "description": "仅创建时使用：租户初始管理员账号。更新时忽略。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "package_id": {
             "format": "int64",
             "type": [
@@ -4707,6 +4798,29 @@
         },
         "required": [
           "enabled"
+        ],
+        "type": "object"
+      },
+      "UpdateProfileRequest": {
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nick_name": {
+            "type": "string"
+          },
+          "phonenumber": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "nick_name"
         ],
         "type": "object"
       },
@@ -9546,6 +9660,39 @@
         "tags": []
       }
     },
+    "/api/v1/system/notices/{notice_id}/mine": {
+      "get": {
+        "operationId": "get_notice_mine",
+        "parameters": [
+          {
+            "description": "公告 id",
+            "in": "path",
+            "name": "notice_id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoticeVo"
+                }
+              }
+            },
+            "description": "公告详情（登录即可读）"
+          },
+          "404": {
+            "description": "不存在"
+          }
+        },
+        "tags": []
+      }
+    },
     "/api/v1/system/notices/{notice_id}/read": {
       "post": {
         "operationId": "mark_notice_read",
@@ -11933,6 +12080,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "web（默认）或 native",
+            "in": "query",
+            "name": "client",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11955,6 +12111,16 @@
               }
             },
             "description": "未配置该提供方"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "client 非法或该提供方未配置原生客户端回调"
           }
         },
         "tags": []
@@ -12015,6 +12181,16 @@
             },
             "description": "未配置该提供方"
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "client 非法或该提供方未配置原生客户端回调"
+          },
           "502": {
             "content": {
               "application/json": {
@@ -12050,6 +12226,68 @@
         "tags": []
       }
     },
+    "/auth/oauth/providers": {
+      "get": {
+        "operationId": "list_providers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OAuthProviderVo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "已配置的第三方登录提供方"
+          }
+        },
+        "tags": []
+      }
+    },
+    "/auth/password": {
+      "put": {
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "密码已更新，所有会话已撤销"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "未认证"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "当前密码错误或新密码不合规"
+          }
+        },
+        "tags": []
+      }
+    },
     "/auth/profile": {
       "get": {
         "operationId": "profile",
@@ -12073,6 +12311,45 @@
               }
             },
             "description": "未认证"
+          }
+        },
+        "tags": []
+      },
+      "put": {
+        "operationId": "update_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "资料已更新"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "未认证"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "昵称或邮箱格式不合规"
           }
         },
         "tags": []
@@ -12134,6 +12411,28 @@
             "description": "未认证"
           }
         },
+        "tags": []
+      }
+    },
+    "/auth/tenants": {
+      "get": {
+        "operationId": "login_tenants",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LoginTenantVo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "启用中的租户"
+          }
+        },
+        "summary": "登录页的租户选择数据：只暴露启用中的租户 id 与名称。",
         "tags": []
       }
     },

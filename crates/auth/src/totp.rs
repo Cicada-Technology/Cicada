@@ -18,7 +18,7 @@ pub const DEFAULT_ISSUER: &str = "cicada";
 pub struct TotpSetup {
     /// Base32 编码的共享密钥（也写进 `sys_user.totp_secret`）。
     pub secret_base32: String,
-    /// `otpauth://totp/...` URL，交给前端生成二维码。
+    /// `otpauth://totp/...` URL；前端可据此渲染二维码，也可直接复制密钥手工录入。
     pub otpauth_url: String,
 }
 

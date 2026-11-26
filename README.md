@@ -44,7 +44,7 @@ cicada 是一个用 Rust 写的**生产级后台基座**。它把后台系统里
 - **编译期正确性**：强类型 ID、类型状态的数据范围查询、权限与审计过程宏；没有反射，没有运行期字符串约定。漏加权限、漏过滤租户、漏做软删除，尽量在编译期或测试期暴露。
 - **模块化单体**：L0–L4 分层，依赖方向由 `deploy/check_layering.py` 在 CI 里强制；跨模块协作走 `ports` 与领域事件，不共享实现。
 - **模板优先，不 fork**：`cicada new` 生成独立工程，框架是依赖；业务代码与框架代码物理分离，升级路径清晰。
-- **全栈且双语**：Rust REST API + Vue 3 管理端，界面与消息支持简体中文 / English。
+- **全栈四端**：Rust REST API + Vue 3 管理端 + Tauri 2 原生端（桌面 / Android / iOS）；四端复用同一套页面与 REST 契约，令牌进平台安全存储，第三方登录走系统浏览器 + `cicada://` deep link。错误消息中英双语，壳层文案可切换。
 
 ## 能力一览
 
@@ -53,13 +53,13 @@ cicada 是一个用 Rust 写的**生产级后台基座**。它把后台系统里
 | **认证与会话** | JWT + Redis 会话、刷新令牌轮换、图形验证码、登录失败锁定、TOTP、强制下线、在线会话快照与历史查询 |
 | **RBAC** | 权限点、菜单树、角色合并、按版本号失效的授权缓存、装配期权限点双向对账 |
 | **数据权限** | 5 种数据范围（全部 / 自定义 / 本部门 / 本部门及以下 / 仅本人），类型状态查询 + PostgreSQL RLS 兜底开关 |
-| **多租户** | `tenant_id` 贯穿实体与缓存键、租户套餐、席位/存储/QPS 限额、默认租户与租户初始化 |
+| **多租户** | `tenant_id` 贯穿实体与缓存键、租户套餐、席位/存储/QPS 限额；登录页租户选择、建租户时同事务创建初始管理员 |
 | **系统域** | 用户、角色、菜单、部门、岗位、字典、参数、公告、在线用户、操作日志、登录日志 |
 | **审计** | 操作/登录日志、字段级变更留痕；`outbox_event` + relay 异步落库；日志按月分区，到期整月归档后再删 |
 | **文件存储** | 本地 / RustFS / 阿里云 OSS / S3 一套 `Storage` trait；magic-number 校验；一次性下载令牌或预签名 URL |
-| **通知中心** | 站内信、邮件（SMTP）、Webhook 三通道；模板、渠道、投递记录 |
+| **通知中心** | 邮件（SMTP）/ Webhook / 短信 / IM 网关；模板、渠道、投递记录；公告已读与顶栏提醒 |
 | **定时任务** | cron 触发 × 进程内/队列执行；集群选主，不重复执行；在线增删改与执行日志 |
-| **代码生成** | 从库表反推 entity / DTO / handler / module / 迁移 / 前端页；单表与树表；模板可覆写；生成物常态化编译校验 |
+| **代码生成** | 从库表反推 entity / DTO / handler / module / 迁移 / 前端页；单表与树表；模板可覆写；Rust 产物编译校验、前端产物 typecheck |
 | **导入导出** | 流式导入导出；大表走 `sys_export_task` 异步任务；10 万行内存稳定有测试守住 |
 | **开放 API** | API Key 签发/校验/停用，`scopes` 精确匹配进权限集合 |
 | **请求流水线** | request_id、trace、安全头、CORS、gzip、体积上限、单 IP 令牌桶 + 租户 QPS 限流、幂等键 |
@@ -142,10 +142,10 @@ flowchart TB
 # 1. 起依赖服务（不要起 compose 里的 server，下面用 cargo 直接跑）
 docker compose up -d postgres redis
 
-# 2. 建表 → 种子 → 默认租户与管理员
+# 2. 建表 → 默认租户与管理员 → 种子（演示数据要落到已存在的 admin/租户上）
 cargo run -p cicada-cli -- migrate
-cargo run -p cicada-cli -- seed
 cargo run -p cicada-cli -- init-admin
+cargo run -p cicada-cli -- seed   # 字典/参数/菜单 + 演示部门/岗位/公告/套餐
 
 # 3. 起后端
 cargo run -p cicada-server
@@ -163,16 +163,35 @@ pnpm dev
 
 打开 `http://localhost:5173`。开发服务器把 `/api` 与 `/auth` 代理到 `http://127.0.0.1:8081`，不需要配 CORS。
 
+### 原生客户端（Tauri：桌面 + Android + iOS）
+
+```bash
+cd clients/app
+corepack pnpm install
+corepack pnpm dev        # 桌面：自动起 web/ 的 Vite 并打开窗口
+corepack pnpm build      # 桌面：deb/rpm/AppImage 或 .msi/.dmg/.app
+corepack pnpm android:dev
+corepack pnpm android:build -- --apk
+corepack pnpm ios:dev    # 仅 macOS + Xcode
+corepack pnpm ios:build
+```
+
+桌面、Android、iOS 与 Web 复用 `web/` 的同一套页面与 REST 契约；壳层只负责平台安全存储
+（`dev.cicada.client`，macOS/iOS Keychain、Android Keystore 等）、下载落盘，以及第三方登录
+由系统浏览器完成后经 `cicada://oauth/callback` 接回。移动端构建前置与签名见
+[`clients/app/README.md`](clients/app/README.md)。
+
 ### 全部用 Docker
 
 ```bash
 docker compose up -d --build
 docker compose exec server cicada-cli migrate
-docker compose exec server cicada-cli seed
 docker compose exec server cicada-cli init-admin
+docker compose exec server cicada-cli seed
 ```
 
-容器内服务监听 8080，映射到宿主机 `http://localhost:8081`。
+容器内服务监听 8081，映射到宿主机 `http://localhost:8081`；同源管理端由 `web` 服务托管在
+`http://localhost:8088`（Nginx 反代 `/api`、`/auth`、`/docs`）。
 
 ### 第一次登录
 
@@ -224,6 +243,8 @@ apps/
 template/     `cicada new` 生成的使用者工程模板
 migrations/   sea-orm-migration 迁移工程（从空库建立 schema，append-only）
 web/          Vue 3 管理端（独立构建）
+clients/
+  app/        Tauri 2 + Rust + TS 客户端（桌面 + Android/iOS，复用 web/）
 config/       分层配置（default / profile / local）
 deploy/       Dockerfile、compose、初始化脚本、分层检查
 docs/         设计文档、ADR、升级指南、OpenAPI 快照
@@ -234,7 +255,7 @@ docs/         设计文档、ADR、升级指南、OpenAPI 快照
 ```bash
 # 依赖 git tag（推荐）
 cargo run -p cicada-cli -- new my-app \
-  --cicada 'git = "https://github.com/<org>/cicada", tag = "v0.1.0"'
+  --cicada 'git = "https://github.com/Cicada-Technology/cicada", tag = "v0.1.0"'
 
 # 或依赖本地工作区，便于同时改框架
 cargo run -p cicada-cli -- new my-app --name my_app --cicada path=$PWD
@@ -244,14 +265,27 @@ cargo run --bin migrate -- up --seed --admin
 cargo run
 ```
 
-生成的工程只碰：
+生成的工程包含：
 
 - `business/`：业务模块（代码生成器的落点）；
 - `migrations/`：业务迁移；
 - `templates/`：代码生成模板覆写；
-- `config/`：本工程配置。
+- `config/`：本工程配置；
+- `web/`：与框架同一份 Vue 管理端（`cicada new` 自动复制）；
+- `clients/app/`：Tauri 2 原生客户端（桌面 + Android/iOS，复用 `web/`）。
 
-框架 crate 走依赖，升级只改版本号。装了 `cargo-generate` 也可以 `cargo generate --path template my-app`，产物一致。
+前端与原生客户端：
+
+```bash
+cd my-app/web && corepack pnpm install && corepack pnpm dev
+cd ../clients/app && corepack pnpm install && corepack pnpm dev
+```
+
+移动端首次构建前在 `clients/app` 运行 `corepack pnpm android:init`（Android SDK/NDK）
+或在 macOS 上运行 `corepack pnpm ios:init`；Tauri 会按本工程标识生成 `gen/`。
+
+框架 crate 走依赖，升级只改版本号。`cargo-generate` 只渲染 Rust 模板，不会复制 `web/` 与
+`clients/app/`；需要全栈工程时请用 `cicada new`（或手工从框架仓库复制这两个目录）。
 
 ## 配置
 
@@ -284,9 +318,8 @@ CICADA_STORAGE_ACCESS_KEY_SECRET=...
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+# 需要真实 PostgreSQL / Redis：先 docker compose up -d postgres redis
 cargo test --workspace
-
-# 需要真实 PostgreSQL / Redis
 cargo test --workspace -- --ignored
 cargo test -p cicada-migrations --test roundtrip -- --ignored
 
@@ -323,10 +356,9 @@ CICADA_OPENAPI_BLESS=1 cargo test -p cicada-web --test openapi_snapshot
 
 当前版本 **0.1.0**，核心基座已交付：
 
-- ✅ 认证、RBAC、数据权限、多租户、系统域、审计、文件、通知、任务、代码生成、导入导出、开放 API、可观测性、Vue 管理端；
-- ⏳ K8s 部署清单与压测基线；
-- ⏳ 代码生成的主子表（`sub`）模板；
-- ⏳ 表单构建等少量前端页面目前是占位页（服务监控与数据监控已实现）。
+- ✅ 认证、RBAC、数据权限、多租户（登录选择 + 租户开通）、系统域、审计、文件、通知、任务、代码生成、导入导出、开放 API、可观测性；
+- ✅ Vue 管理端 + Tauri 2 原生端（桌面 / Android / iOS）；个人中心、自助改密、TOTP、文件管理、导出任务、变更留痕、公告铃铛均闭环；
+- 范围说明：K8s、主子表代码生成与表单构建不在本项目范围，相关菜单/承诺已移除。
 
 迁移遵循 append-only；接口与配置的 Breaking 变更记录在 [`CHANGELOG.md`](CHANGELOG.md)，升级动作见 [`docs/UPGRADE.md`](docs/UPGRADE.md)。
 

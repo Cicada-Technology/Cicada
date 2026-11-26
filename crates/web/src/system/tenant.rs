@@ -19,9 +19,11 @@ use cicada_system::entity::{
     TenantActiveModel, TenantColumn, TenantEntity, TenantModel, TenantPackageActiveModel,
     TenantPackageColumn, TenantPackageEntity, TenantPackageModel,
 };
+use cicada_system::{NewTenant, ProvisionError, create_tenant_with_admin};
 
 use super::{
-    ApiErr, bad_request, conflict, db_error, forbidden, not_found, referenced, unauthorized,
+    ApiErr, bad_request, conflict, db_error, field_error, forbidden, not_found, referenced,
+    unauthorized,
 };
 use crate::extractor::RequestContextExt;
 use crate::response::created;
@@ -41,12 +43,16 @@ pub const PERMS: &[&str] = &[
     "system:package:remove",
 ];
 
-fn require_platform(ctx: &cicada_kernel::RequestContext) -> Result<(), ApiErr> {
+fn require_platform(state: &AppState, ctx: &cicada_kernel::RequestContext) -> Result<(), ApiErr> {
     if ctx.principal.is_none() {
         return Err(unauthorized());
     }
-    if !ctx.is_super_admin {
-        return Err(forbidden("租户与套餐管理是平台级操作，仅超级管理员可用"));
+    // 租户自己的 `admin` 角色在租户内是超级管理员，但不是平台管理员；
+    // 平台级资源只允许默认租户（平台租户）的超级管理员操作。
+    if !ctx.is_super_admin || ctx.tenant_id.get() != state.config.tenant.default_id {
+        return Err(forbidden(
+            "租户与套餐管理是平台级操作，仅默认租户的超级管理员可用",
+        ));
     }
     Ok(())
 }
@@ -102,6 +108,12 @@ pub struct TenantUpsert {
     pub status: i16,
     pub package_id: Option<i64>,
     pub remark: Option<String>,
+    /// 仅创建时使用：租户初始管理员账号。更新时忽略。
+    #[serde(default)]
+    pub admin_username: Option<String>,
+    /// 仅创建时使用：租户初始管理员密码。更新时忽略。
+    #[serde(default)]
+    pub admin_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -224,7 +236,7 @@ pub async fn list_tenants(
     Query(q): Query<TenantListQuery>,
 ) -> Result<Json<TenantPage>, ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
 
     let mut query = TenantEntity::find();
     if let Some(name) = q.tenant_name.filter(|s| !s.is_empty()) {
@@ -273,7 +285,7 @@ pub async fn get_quota(
     Path(tenant_id): Path<i64>,
 ) -> Result<Json<QuotaVo>, ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
 
     // 先确认租户存在（用量快照对不存在的租户没有意义）。
     let _tenant = TenantEntity::find_by_id(tenant_id)
@@ -320,7 +332,7 @@ pub async fn create_tenant(
     Json(req): Json<TenantUpsert>,
 ) -> Result<(StatusCode, HeaderMap, Json<TenantVo>), ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
     let Some(principal) = &ctx.principal else {
         return Err(unauthorized());
     };
@@ -331,21 +343,34 @@ pub async fn create_tenant(
     if let Some(id) = req.package_id {
         ensure_package(&state, id).await?;
     }
-    let row = TenantActiveModel {
-        tenant_name: Set(name.to_string()),
-        status: Set(req.status),
-        package_id: Set(req.package_id),
-        remark: Set(req.remark.clone()),
-        create_by: Set(Some(principal.user_name.clone())),
-        create_time: Set(chrono::Utc::now()),
-        ..Default::default()
+    let admin_username = req.admin_username.as_deref().unwrap_or("").trim();
+    let admin_password = req.admin_password.as_deref().unwrap_or("");
+    if admin_username.is_empty() || admin_password.is_empty() {
+        return Err(bad_request("创建租户必须同时提供初始管理员账号与密码"));
     }
-    .insert(state.db.conn())
+    let provisioned = create_tenant_with_admin(
+        state.db.conn(),
+        NewTenant {
+            name,
+            status: req.status,
+            package_id: req.package_id,
+            remark: req.remark.as_deref(),
+            admin_username,
+            admin_password,
+            password_min_length: state.config.auth.password.min_length,
+            create_by: Some(principal.user_name.as_str()),
+        },
+    )
     .await
-    .map_err(db_error)?;
+    .map_err(|e| match e {
+        ProvisionError::Db(e) => db_error(e),
+        ProvisionError::Password(msg) => field_error("admin_password", msg),
+        ProvisionError::EmptyUsername => field_error("admin_username", "管理员账号不能为空"),
+        ProvisionError::DuplicateUsername(name) => conflict(format!("管理员账号已存在：{name}")),
+    })?;
     Ok(created(
-        format!("/api/v1/system/tenants/{}", row.tenant_id),
-        tenant_vo(&state, row).await?,
+        format!("/api/v1/system/tenants/{}", provisioned.tenant.tenant_id),
+        tenant_vo(&state, provisioned.tenant).await?,
     ))
 }
 
@@ -365,7 +390,7 @@ pub async fn update_tenant(
     Json(req): Json<TenantUpsert>,
 ) -> Result<Json<TenantVo>, ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
     let Some(principal) = &ctx.principal else {
         return Err(unauthorized());
     };
@@ -432,7 +457,7 @@ pub async fn delete_tenant(
     Path(tenant_id): Path<i64>,
 ) -> Result<StatusCode, ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
     if tenant_id == 1 {
         return Err(conflict("默认租户不可删除"));
     }
@@ -489,7 +514,7 @@ pub async fn list_packages(
     Query(q): Query<PackageListQuery>,
 ) -> Result<Json<PackagePage>, ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
 
     let mut query = TenantPackageEntity::find();
     if let Some(code) = q.code.filter(|s| !s.is_empty()) {
@@ -537,7 +562,7 @@ pub async fn create_package(
     Json(req): Json<PackageUpsert>,
 ) -> Result<(StatusCode, HeaderMap, Json<PackageVo>), ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
     let Some(principal) = &ctx.principal else {
         return Err(unauthorized());
     };
@@ -592,7 +617,7 @@ pub async fn update_package(
     Json(req): Json<PackageUpsert>,
 ) -> Result<Json<PackageVo>, ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
     let Some(principal) = &ctx.principal else {
         return Err(unauthorized());
     };
@@ -673,7 +698,7 @@ pub async fn delete_package(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiErr> {
     let ctx = ctx.into_inner();
-    require_platform(&ctx)?;
+    require_platform(&state, &ctx)?;
     let in_use = TenantEntity::find()
         .filter(TenantColumn::PackageId.eq(id))
         .one(state.db.conn())

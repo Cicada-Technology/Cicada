@@ -12,8 +12,9 @@
 ## 公开 API
 
 - `NotifyService`：`new(db, Arc<dyn NotifySender>)`、`send(tenant, SendRequest)`、`choose_locale`。
-- `NotifySender`（缝）：`HttpSender`（生产，`reqwest`）、`RecordingSender`（测试）。
-- `ChannelKind` / `ChannelConfig` / `encode_body`：三通道各自的网关请求体约定。
+- `NotifySender`（缝）：`RoutingSender`（email 配 `host` 走 SMTP，否则走 HTTP 网关）、
+  `HttpSender`、`SmtpSender`、`RecordingSender`（测试）。
+- `ChannelKind` / `ChannelConfig` / `encode_body`：sms / email / webhook / im 的传输约定。
 - `render` / `validate`：minijinja 渲染与「保存时语法校验」（严格模式，未知变量即报错）。
 - `entity::*`：三张表的 SeaORM 实体。
 
@@ -24,6 +25,6 @@
 ## 不做什么
 
 - 不自己做重试与限流：失败只留痕 + `warn` 日志，重试策略交给调用方或调度器。
-- 不做 SMTP/厂商 SDK：三种通道统一走 HTTP 网关，换厂商只需换 `config.endpoint`；
-  要接 SMTP 就再加一个 `NotifySender` adapter（缝已留好）。
+- 不做厂商 SDK：sms / webhook / im 统一走 HTTP 网关，换厂商只需换 `config.endpoint`；
+  email 已内置 lettre SMTP（配 `host`）与 HTTP 网关两种后端。
 - 不拥有 `sys_oper_log`：审计走 `cicada-audit`。

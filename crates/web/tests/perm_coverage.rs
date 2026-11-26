@@ -36,7 +36,6 @@ const APPENDIX_D_MENU: &[&str] = &[
     "monitor:data:view",
     "monitor:server:view",
     "monitor:cache:view",
-    "tool:build:view",
     "tool:gen:view",
     "tool:swagger:view",
 ];
@@ -242,8 +241,12 @@ fn no_seeded_button_guards_nothing() {
 
 #[test]
 fn appendix_d_totals_match_spec() {
-    assert_eq!(APPENDIX_D_MENU.len(), 18, "C 类应为 18 条");
+    assert_eq!(
+        APPENDIX_D_MENU.len(),
+        17,
+        "C 类应为 17 条（表单构建已移出范围）"
+    );
     assert_eq!(APPENDIX_D_IMPL.len(), 62, "F 类应为 62 条且已全部实现");
-    // 权限点清单合计 80 条：18 菜单 + 62 按钮。
-    assert_eq!(APPENDIX_D_MENU.len() + APPENDIX_D_IMPL.len(), 80);
+    // 权限点清单合计 79 条：17 菜单 + 62 按钮。
+    assert_eq!(APPENDIX_D_MENU.len() + APPENDIX_D_IMPL.len(), 79);
 }

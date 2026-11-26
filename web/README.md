@@ -11,7 +11,10 @@ pnpm dev              # 开发服务器 :5173，/api 与 /auth 代理到 VITE_DE
 pnpm typecheck        # vue-tsc --noEmit
 pnpm lint             # ESLint（flat config）
 pnpm format           # Prettier
-pnpm build            # typecheck + vite build
+pnpm build            # typecheck + vite build（Web）
+pnpm build:desktop    # Tauri 桌面（.env.desktop）
+pnpm build:android    # Tauri Android（.env.android，模拟器默认 10.0.2.2）
+pnpm build:ios        # Tauri iOS（.env.ios，模拟器默认 127.0.0.1）
 pnpm preview          # 预览 dist/
 ```
 
@@ -41,8 +44,7 @@ CORS：前端始终按同源相对路径发请求，行为与生产的 Nginx 反
 - **接口**：调用 `utils/request.ts` 的 `get/post/put/delete/upload/download`，返回值是**响应体**
   而不是 axios 响应。集合一律 `{ items, total, page, page_size }`。
 - **错误**：所有失败都归一成 `ApiError`；默认由拦截器弹一次全局提示，`silent: true` 可关
-  （登录页用它做内联提示）。后端错误体可能是 RFC 9457 的 `problem+json`，也可能是当前的
-  `{ "error": "…" }`，`utils/api-error.ts` 两种都能读。
+  （登录页用它做内联提示）。后端错误体统一是 RFC 9457 的 `problem+json`，前端只解析这一种形状。
 - **状态位语义**（沿用参考实现，与直觉相反）：`status` 0 正常/成功、1 停用/失败；`visible` 0 显示。
 - **权限**：`v-perm` 只是界面裁剪，判定永远在后端。权限点字符串与后端
   `#[require_perm]` 逐字一致。
@@ -79,7 +81,7 @@ CORS：前端始终按同源相对路径发请求，行为与生产的 Nginx 反
   常见原因是该页漏引 `App*` 组件。
 - 刷新后查询参数丢了：守卫重放地址时的写法问题，见上面「动态路由重放」。
 
-## 后续批次
+## 占位页
 
-富文本编辑器与表单构建（`/tool/build`）尚未实现界面，菜单点进去会落在占位页说明原因
-（`views/placeholder/index.vue`）；服务监控与数据监控已实现。
+`views/placeholder/index.vue` 仍作为“菜单已配、视图缺失”的兜底；当前种子菜单全部有对应页面，
+不会再命中它。表单构建不在项目范围，菜单已移除。

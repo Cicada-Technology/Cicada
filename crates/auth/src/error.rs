@@ -48,6 +48,8 @@ pub enum AuthError {
     TotpAlreadyEnabled,
     #[error("未知的登录提供方：{0}")]
     OAuthProviderNotFound(String),
+    #[error("提供方 {0} 未配置原生客户端回调地址")]
+    OAuthNativeUnsupported(String),
     #[error("授权 state 无效或已过期")]
     OAuthStateInvalid,
     #[error("第三方登录上游失败：{0}")]

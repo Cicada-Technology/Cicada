@@ -26,7 +26,7 @@ use cicada_worker::{
 
 fn url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://cicada:2025%40hanmole@localhost:5432/cicada".to_string())
+        .unwrap_or_else(|_| "postgres://cicada:2026%40cicada@localhost:5432/cicada".to_string())
 }
 
 /// 每个测试用自己的队列命名空间，共享同一张 `apalis.jobs` 表也互不干扰。

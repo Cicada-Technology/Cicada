@@ -29,9 +29,9 @@ pub use login::{
     LoginResult, RefreshResult, SessionPolicy, canonical_identifier, login, logout, refresh,
 };
 pub use oauth::{
-    ExternalIdentity, HttpOAuthClient, InMemoryOAuthStateStore, OAuthClient, OAuthLoginOutcome,
-    OAuthService, OAuthStateStore, ProviderKind, RecordingOAuthClient, RedisOAuthStateStore,
-    authorize_url, redirect_uri,
+    ExternalIdentity, HttpOAuthClient, InMemoryOAuthStateStore, OAuthClient, OAuthClientKind,
+    OAuthLoginOutcome, OAuthService, OAuthStateStore, ProviderKind, RecordingOAuthClient,
+    RedisOAuthStateStore, authorize_url, redirect_uri,
 };
 pub use online::{
     Model as UserOnline, OnlineSnapshot, ReconcileReport, Relation as UserOnlineRelation,

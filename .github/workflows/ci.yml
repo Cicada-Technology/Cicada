@@ -20,7 +20,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # 测试与 `cargo run` 的连接串：与本地 docker-compose 的初始化脚本保持一致。
-  DATABASE_URL: postgres://cicada:2025%40hanmole@localhost:5432/cicada
+  DATABASE_URL: postgres://cicada:2026%40cicada@localhost:5432/cicada
   REDIS_URL: redis://localhost:6379/0
 
 jobs:
@@ -123,8 +123,19 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
       - name: 渲染使用者工程（业务代码落在 business/，框架走依赖）
         run: cargo run -q -p cicada-cli -- new "$RUNNER_TEMP/my-app" --name my_app --cicada "path=$PWD"
+      - name: 模板包含前端与桌面客户端骨架
+        run: test -f web/src/main.ts && test -f clients/app/src-tauri/Cargo.toml
+        working-directory: ${{ runner.temp }}/my-app
       - name: 编译使用者工程（含生成器产出的业务模块）
         run: cargo check --all-targets
         working-directory: ${{ runner.temp }}/my-app
@@ -133,7 +144,25 @@ jobs:
         run: cargo run -q --bin migrate -- up --seed --admin
         working-directory: ${{ runner.temp }}/my-app
         env:
-          DATABASE_URL: postgres://cicada:2025%40hanmole@localhost:5432/cicada
+          DATABASE_URL: postgres://cicada:2026%40cicada@localhost:5432/cicada
+      # 代码生成器的前端产物必须能直接落在模板 web/ 里并通过 typecheck。
+      - name: 生成器产物落位
+        run: |
+          cargo run -q -p cicada-cli -- gen --table biz_goods --out /tmp/goods.zip
+          unzip -o /tmp/goods.zip -d "$RUNNER_TEMP/my-app"
+        env:
+          DATABASE_URL: postgres://cicada:2026%40cicada@localhost:5432/cicada
+      - name: 生成器 Rust 产物编译
+        run: |
+          printf '\npub mod biz_goods;\n' >> business/mod.rs
+          cargo check --all-targets
+        working-directory: ${{ runner.temp }}/my-app
+      - name: 模板前端依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: ${{ runner.temp }}/my-app/web
+      - name: 模板前端 typecheck + build
+        run: pnpm run build
+        working-directory: ${{ runner.temp }}/my-app/web
 
   frontend:
     name: 前端（web/）
@@ -159,6 +188,69 @@ jobs:
         working-directory: web
       - run: pnpm run build
         working-directory: web
+
+  android-check:
+    name: 移动端（共享前端 Android 构建 + Rust 交叉检查）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/app/src-tauri
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Android Rust target
+        run: rustup target add aarch64-linux-android
+      - name: 前端依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: web
+      - name: 共享前端 Android 构建
+        run: pnpm run build:android
+        working-directory: web
+      - name: Tauri 壳 Android 交叉检查
+        run: cargo check --target aarch64-linux-android
+        working-directory: clients/app/src-tauri
+
+  desktop:
+    name: 桌面客户端（Tauri → 二进制）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/app/src-tauri
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            clients/app/pnpm-lock.yaml
+      - name: 系统依赖（WebKitGTK / GTK）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: 前端依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: web
+      - name: 桌面壳依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: clients/app
+      - name: 构建 Tauri（no-bundle）
+        run: pnpm tauri build --no-bundle
+        working-directory: clients/app
 
   image:
     name: 镜像构建与冒烟（镜像构建 → 冒烟）
@@ -190,7 +282,7 @@ jobs:
       # server 不解析参数，于是这一步不迁移而是起一个占用 8080 的服务。
       - name: 迁移 + 种子（镜像里自带 cicada-cli，部署「先迁移后发版」）
         run: |
-          for step in "migrate up" "seed" "init-admin"; do
+          for step in "migrate up" "init-admin" "seed"; do
             docker run --rm --network host \
               -e DATABASE_URL='postgres://postgres:ci-root-pw@127.0.0.1:5432/cicada' \
               -e REDIS_URL='redis://127.0.0.1:6379/0' \
@@ -203,25 +295,25 @@ jobs:
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             cicada-server:ci
           for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8080/readyz >/dev/null && break
+            curl -fsS http://127.0.0.1:8081/readyz >/dev/null && break
             sleep 2
           done
           docker logs cicada-smoke | tail -20
-          curl -fsS http://127.0.0.1:8080/readyz
-          curl -fsS http://127.0.0.1:8080/metrics | grep -q '^cicada_up'
-          curl -fsS http://127.0.0.1:8080/api-docs/openapi.json >/dev/null
+          curl -fsS http://127.0.0.1:8081/readyz
+          curl -fsS http://127.0.0.1:8081/metrics | grep -q '^cicada_up'
+          curl -fsS http://127.0.0.1:8081/api-docs/openapi.json >/dev/null
           # 登录 → 带令牌取受保护资源：这条打通才算「镜像里的产物真的能用」。
-          TOKEN=$(curl -fsS -X POST http://127.0.0.1:8080/auth/login \
+          TOKEN=$(curl -fsS -X POST http://127.0.0.1:8081/auth/login \
             -H 'content-type: application/json' \
             -d '{"username":"admin","password":"Cicada@2026"}' | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
           test -n "$TOKEN"
-          curl -fsS http://127.0.0.1:8080/api/v1/system/users?page=1\&page_size=5 \
+          curl -fsS http://127.0.0.1:8081/api/v1/system/users?page=1\&page_size=5 \
             -H "authorization: Bearer $TOKEN" | grep -q '"items"'
           # 可观测性的两类指标都要在真实抓取里出现：常驻计数器 + 事件点计数器。
           # 名字没有 cicada_ 前缀（只有 `cicada_up` 有），按 Prometheus 惯例让抓取端加 job 标签。
-          curl -fsS http://127.0.0.1:8080/metrics | grep -q '^http_requests_total{'
+          curl -fsS http://127.0.0.1:8081/metrics | grep -q '^http_requests_total{'
           # 接口面从镜像里取，证明「文档 + 路由」这一整套随产物交付，而不是只在测试进程里成立。
-          curl -fsS http://127.0.0.1:8080/api-docs/openapi.json \
+          curl -fsS http://127.0.0.1:8081/api-docs/openapi.json \
             | python3 -c 'import json,sys; d=json.load(sys.stdin); n=len(d["paths"]); print(n, "paths"); sys.exit(n >= 100)'
       - name: 容器健康检查应为 healthy
         run: |

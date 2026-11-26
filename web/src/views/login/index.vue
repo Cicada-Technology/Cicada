@@ -11,16 +11,24 @@
  * 是四条不同的处理路径，用户需要看着表单修正，弹窗飘走就看不清了。
  */
 import type { FormInstance, FormItemRule } from 'element-plus';
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
-import { getCaptcha } from '@/api/auth';
+import { getCaptcha, getLoginTenants, type LoginTenantVo } from '@/api/auth';
+import {
+  bindOAuthIdentity,
+  getOAuthAuthorizeUrl,
+  listOAuthProviders,
+  type OAuthProviderVo,
+} from '@/api/oauth';
 import { HOME_PATH } from '@/router/routes';
 import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
 import { usePermissionStore } from '@/stores/permission';
 import { ApiError } from '@/utils/api-error';
+import { isTauriApp, openOAuthAuthorizeUrl } from '@/utils/native';
+import { notifySuccess, notifyWarning } from '@/utils/feedback';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -36,6 +44,70 @@ const loading = ref(false);
 const errorMessage = ref('');
 
 const form = reactive({ username: '', password: '', totp: '', captchaCode: '' });
+const tenants = ref<LoginTenantVo[]>([]);
+const selectedTenant = ref<number | undefined>();
+const oauthProviders = ref<OAuthProviderVo[]>([]);
+
+onMounted(async () => {
+  try {
+    tenants.value = await getLoginTenants();
+    // 单租户时不覆盖后端 default_id；多租户才让用户明确选择。
+    if (tenants.value.length > 1) selectedTenant.value = tenants.value[0].tenant_id;
+  } catch {
+    // 租户列表失败不阻塞登录：后端会回落到默认租户。
+  }
+  try {
+    oauthProviders.value = await listOAuthProviders();
+  } catch {
+    // 未配置第三方登录时列表为空。
+  }
+});
+
+const OAUTH_PROVIDER_KEY = 'cicada.oauth.provider';
+const OAUTH_BINDING_KEY = 'cicada.oauth.binding';
+
+function oauthLabel(provider: OAuthProviderVo): string {
+  if (provider.kind === 'wechat') return '微信';
+  if (provider.kind === 'oidc') return '企业 SSO';
+  return provider.code;
+}
+
+async function startOAuth(provider: OAuthProviderVo): Promise<void> {
+  try {
+    const native = isTauriApp();
+    const info = await getOAuthAuthorizeUrl(provider.code, native ? 'native' : undefined);
+    // 回调页可能运行在冷启动后的新页面里，provider 必须跨页面/重启保留。
+    localStorage.setItem(OAUTH_PROVIDER_KEY, provider.code);
+    await openOAuthAuthorizeUrl(info.authorize_url);
+  } catch {
+    // 提示由拦截器给出（silent 时由这里兜底）。
+    notifyWarning('第三方登录暂不可用');
+  }
+}
+
+async function completeOAuthBinding(): Promise<void> {
+  let raw: string | null;
+  try {
+    raw = sessionStorage.getItem(OAUTH_BINDING_KEY);
+  } catch {
+    return;
+  }
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as { binding_ticket?: string };
+    if (!parsed.binding_ticket) return;
+    await bindOAuthIdentity(parsed.binding_ticket);
+    notifySuccess('第三方身份已绑定到当前账号');
+  } catch {
+    notifyWarning('第三方身份绑定失败，可在个人中心重试');
+  } finally {
+    try {
+      sessionStorage.removeItem(OAUTH_BINDING_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
 
 /** 图形验证码：后端在连续失败后返回「图形验证码」错误，届时才展示。 */
 const captchaNeeded = ref(false);
@@ -79,18 +151,20 @@ async function submit(): Promise<void> {
     await auth.signIn({
       username: form.username.trim(),
       password: form.password,
+      tenant_id: selectedTenant.value,
       totp: form.totp.trim() === '' ? undefined : form.totp.trim(),
       captcha_id: captchaNeeded.value ? captcha.id : undefined,
       captcha_code: captchaNeeded.value ? form.captchaCode.trim() || undefined : undefined,
     });
     await auth.loadProfile();
+    await completeOAuthBinding();
     // 动态路由属于上一个账号：先撤干净，交给守卫按新权限重建。
     permission.reset();
     await router.replace(redirectTarget.value ?? HOME_PATH);
   } catch (error) {
     errorMessage.value = error instanceof ApiError ? error.message : t('login.failed');
-    // 后端要求验证码（首次触发或答案错/过期）：展示并取一张新的。
-    if (errorMessage.value.includes('图形验证码')) {
+    // 后端要求验证码（首次触发或答案错/过期）：按业务码判断，不依赖本地化文案。
+    if (error instanceof ApiError && error.code === 'CICADA_AUTH_1005') {
       captchaNeeded.value = true;
     }
     // 验证码是一次性的：任何失败都可能已被后端消费，统一换一张。
@@ -126,6 +200,22 @@ async function submit(): Promise<void> {
         class="login__form"
         @submit.prevent="submit"
       >
+        <el-form-item v-if="tenants.length > 1" :label="t('login.tenant')">
+          <el-select
+            v-model="selectedTenant"
+            size="large"
+            :placeholder="t('login.tenantPlaceholder')"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="tenant in tenants"
+              :key="tenant.tenant_id"
+              :label="tenant.tenant_name"
+              :value="tenant.tenant_id"
+            />
+          </el-select>
+        </el-form-item>
+
         <el-form-item :label="t('login.username')" prop="username">
           <el-input
             v-model="form.username"
@@ -187,6 +277,20 @@ async function submit(): Promise<void> {
         </el-button>
       </el-form>
 
+      <div v-if="oauthProviders.length > 0" class="login__oauth">
+        <p class="login__oauth-title">或使用第三方登录</p>
+        <div class="login__oauth-actions">
+          <el-button
+            v-for="provider in oauthProviders"
+            :key="provider.code"
+            size="large"
+            @click="startOAuth(provider)"
+          >
+            {{ oauthLabel(provider) }}
+          </el-button>
+        </div>
+      </div>
+
       <!-- 开发期提示种子管理员账号（`migrations/src/seed.rs`）：生产构建里这段不存在。 -->
       <p v-if="isDev" class="login__dev-hint">
         开发模式：种子管理员 <code>admin / Cicada@2026</code>
@@ -200,6 +304,7 @@ async function submit(): Promise<void> {
   display: grid;
   place-items: center;
   min-height: 100vh;
+  min-height: 100dvh;
   padding: var(--ci-space-4);
   /* 背景给一层极淡的径向光：登录页是唯一没有内容的页面，纯平背景下卡片会显得悬浮无依。 */
   background:
@@ -266,6 +371,26 @@ async function submit(): Promise<void> {
   width: 100%;
 }
 
+.login__oauth {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ci-space-2);
+  margin-top: var(--ci-space-4);
+}
+
+.login__oauth-title {
+  text-align: center;
+  font-size: var(--ci-text-xs);
+  color: var(--ci-color-text-tertiary);
+}
+
+.login__oauth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--ci-space-2);
+}
+
 .login__captcha-img {
   height: 40px;
   border-radius: var(--ci-radius-sm);
@@ -281,5 +406,15 @@ async function submit(): Promise<void> {
 
 .login__dev-hint code {
   font-family: var(--ci-font-mono);
+}
+
+@media (max-width: 480px) {
+  .login {
+    padding: var(--ci-space-3);
+  }
+
+  .login__card {
+    padding: var(--ci-space-6);
+  }
 }
 </style>

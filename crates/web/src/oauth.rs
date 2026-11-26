@@ -9,14 +9,15 @@
 //! 未配置任何提供方时（默认部署）一律 404。
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
+use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use cicada_audit::LoginLog;
-use cicada_auth::{AuthError, ExternalIdentity, OAuthLoginOutcome};
+use cicada_auth::{AuthError, ExternalIdentity, OAuthClientKind, OAuthLoginOutcome};
 
 use crate::auth::{LoginResponse, map_auth_error, session_policy};
 use crate::extractor::RequestContextExt;
@@ -31,18 +32,39 @@ fn err(locale: &str, e: &AuthError) -> ApiErr {
     map_auth_error(locale, e)
 }
 
+/// `client` 缺省为 web；未知值按字段校验失败处理。
+fn client_kind(raw: Option<&str>, locale: &str) -> Result<OAuthClientKind, ApiErr> {
+    match raw {
+        None => Ok(OAuthClientKind::Web),
+        Some(value) => OAuthClientKind::parse(value).ok_or_else(|| {
+            Problem::new(
+                crate::problem::BizCode::ValidationFields,
+                t!("auth.oauth.client_invalid", locale = locale).into_owned(),
+            )
+        }),
+    }
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct AuthorizeUrlResponse {
-    /// 浏览器/内嵌页直接打开的授权地址。
+    /// 浏览器/桌面端交给系统浏览器直接打开的授权地址。
     pub authorize_url: String,
     /// 服务端生成的一次性 `state`，回调时必须原样带回。
     pub state: String,
 }
 
 #[derive(Deserialize, ToSchema)]
+pub struct AuthorizeQuery {
+    /// `web`（默认）或 `native`；Tauri 原生客户端必须配置 `native_redirect_uri`。
+    pub client: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
 pub struct CallbackRequest {
     pub code: String,
     pub state: String,
+    /// 与发起授权时一致：`web`（默认）或 `native`。
+    pub client: Option<String>,
 }
 
 /// 回调结果：`bound` 带令牌，`unbound` 带绑定票据。
@@ -98,20 +120,26 @@ pub struct BindOAuthResponse {
 #[utoipa::path(
     get,
     path = "/auth/login/{provider}/authorize-url",
-    params(("provider" = String, Path, description = "提供方标识，如 wechat / keycloak")),
+    params(
+        ("provider" = String, Path, description = "提供方标识，如 wechat / keycloak"),
+        ("client" = Option<String>, Query, description = "web（默认）或 native"),
+    ),
     responses(
         (status = 200, description = "授权地址与 state", body = AuthorizeUrlResponse),
-        (status = 404, description = "未配置该提供方", body = Problem)
+        (status = 404, description = "未配置该提供方", body = Problem),
+        (status = 422, description = "client 非法或该提供方未配置原生客户端回调", body = Problem)
     )
 )]
 pub async fn authorize_url(
     State(state): State<AppState>,
     Path(provider): Path<String>,
+    Query(query): Query<AuthorizeQuery>,
     locale: Locale,
 ) -> Result<Json<AuthorizeUrlResponse>, ApiErr> {
+    let client = client_kind(query.client.as_deref(), &locale.0)?;
     let req = state
         .oauth
-        .authorize_url(&provider)
+        .authorize_url(&provider, client)
         .await
         .map_err(|e| err(&locale.0, &e))?;
     Ok(Json(AuthorizeUrlResponse {
@@ -129,6 +157,7 @@ pub async fn authorize_url(
         (status = 200, description = "已绑定：直接发令牌；未绑定：返回绑定票据", body = CallbackResponse),
         (status = 401, description = "state 无效或已过期", body = Problem),
         (status = 404, description = "未配置该提供方", body = Problem),
+        (status = 422, description = "client 非法或该提供方未配置原生客户端回调", body = Problem),
         (status = 502, description = "上游提供方不可用或返回错误", body = Problem)
     )
 )]
@@ -139,6 +168,7 @@ pub async fn callback(
     Json(req): Json<CallbackRequest>,
 ) -> Result<Json<CallbackResponse>, ApiErr> {
     let ctx = ctx.into_inner();
+    let client = client_kind(req.client.as_deref(), &ctx.locale)?;
     let ip = ctx.ip.to_string();
     let ua = ctx.user_agent.clone().unwrap_or_default();
     let tenant_id = ctx.tenant_id.get();
@@ -153,6 +183,7 @@ pub async fn callback(
             &provider,
             &req.code,
             &req.state,
+            client,
             &ip,
             &ua,
         )
@@ -258,8 +289,34 @@ pub async fn bind_oauth(
     ))
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct OAuthProviderVo {
+    pub code: String,
+    pub kind: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/auth/oauth/providers",
+    responses((status = 200, description = "已配置的第三方登录提供方", body = [OAuthProviderVo]))
+)]
+pub async fn list_providers(State(state): State<AppState>) -> Json<Vec<OAuthProviderVo>> {
+    Json(
+        state
+            .oauth
+            .providers()
+            .iter()
+            .map(|p| OAuthProviderVo {
+                code: p.code.clone(),
+                kind: p.kind.clone(),
+            })
+            .collect(),
+    )
+}
+
 pub fn routes(_state: AppState) -> Routes {
     Routes::new()
+        .route("/auth/oauth/providers", get(list_providers), &[])
         .route(
             "/auth/login/{provider}/authorize-url",
             get(authorize_url),

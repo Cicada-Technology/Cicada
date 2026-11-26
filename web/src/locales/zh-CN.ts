@@ -66,6 +66,8 @@ const messages = {
   login: {
     title: '登录',
     subtitle: '使用你的账号继续',
+    tenant: '租户',
+    tenantPlaceholder: '选择租户',
     username: '账号',
     usernamePlaceholder: '账号 / 手机 / 邮箱',
     password: '密码',

@@ -55,7 +55,7 @@ where
 {
     let mut workbook = Workbook::new();
     {
-        let sheet = workbook.add_worksheet_with_constant_memory();
+        let sheet = workbook.add_worksheet_with_constant_memory()?;
         sheet.set_name(sheet_name)?;
 
         let header_fmt = Format::new().set_bold().set_background_color("#F2F2F2");

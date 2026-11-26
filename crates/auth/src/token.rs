@@ -94,13 +94,13 @@ impl TokenService {
         Self {
             signer: Signer {
                 alg: Algorithm::HS256,
-                key: EncodingKey::from_secret(&key),
+                key: EncodingKey::from_secret(&key).expect("HS256 encoding key"),
                 kid: None,
             },
             verifiers: vec![Verifier {
                 alg: Algorithm::HS256,
                 kid: None,
-                key: DecodingKey::from_secret(&key),
+                key: DecodingKey::from_secret(&key).expect("HS256 decoding key"),
             }],
             access_ttl_secs,
         }
@@ -122,7 +122,8 @@ impl TokenService {
             },
             _ => Signer {
                 alg,
-                key: EncodingKey::from_secret(cfg.private_key.expose_secret().as_bytes()),
+                key: EncodingKey::from_secret(cfg.private_key.expose_secret().as_bytes())
+                    .map_err(|e| AuthError::Config(format!("auth.jwt.private_key: {e}")))?,
                 kid: kid.clone(),
             },
         };
@@ -134,7 +135,8 @@ impl TokenService {
                     DecodingKey::from_ed_pem(cfg.public_key.expose_secret().as_bytes())
                         .map_err(|e| AuthError::Config(format!("auth.jwt.public_key: {e}")))?
                 }
-                _ => DecodingKey::from_secret(cfg.private_key.expose_secret().as_bytes()),
+                _ => DecodingKey::from_secret(cfg.private_key.expose_secret().as_bytes())
+                    .map_err(|e| AuthError::Config(format!("auth.jwt.private_key: {e}")))?,
             },
         }];
         for key in &cfg.keys {
@@ -153,7 +155,8 @@ impl TokenService {
             let decoding = match alg {
                 Algorithm::EdDSA => DecodingKey::from_ed_pem(raw.as_bytes())
                     .map_err(|e| AuthError::Config(format!("auth.jwt.keys[{}]: {e}", key.kid)))?,
-                _ => DecodingKey::from_secret(raw.as_bytes()),
+                _ => DecodingKey::from_secret(raw.as_bytes())
+                    .map_err(|e| AuthError::Config(format!("auth.jwt.keys[{}]: {e}", key.kid)))?,
             };
             verifiers.push(Verifier {
                 alg,

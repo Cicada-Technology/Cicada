@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{
     Router, middleware,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use http_body_util::BodyExt;
 use rust_i18n::t;
@@ -21,7 +21,10 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::assemble::Assembler;
 use crate::async_export::ExportTaskModule;
-use crate::auth::{captcha_image, login, logout, profile, refresh, routers};
+use crate::auth::{
+    captcha_image, change_password, change_password__audit, login, login_tenants, logout, profile,
+    refresh, routers, update_profile, update_profile__audit,
+};
 use crate::cache::CacheModule;
 use crate::codegen::CodeModule;
 use crate::data::DataModule;
@@ -52,10 +55,23 @@ pub fn core_routes(state: AppState) -> Routes {
         .route("/readyz", get(readyz), &[])
         .route("/metrics", get(metrics), &[])
         .route("/auth/login", post(login), &[])
+        .route("/auth/tenants", get(login_tenants), &[])
         .route("/auth/captcha", get(captcha_image), &[])
         .route("/auth/refresh", post(refresh), &[])
         .route("/auth/logout", post(logout), &[])
         .route("/auth/profile", get(profile), &[])
+        .route_audited(
+            "/auth/profile",
+            put(update_profile),
+            &[],
+            update_profile__audit(),
+        )
+        .route_audited(
+            "/auth/password",
+            put(change_password),
+            &[],
+            change_password__audit(),
+        )
         .route("/auth/routers", get(routers), &[])
         .merge(identity::routes(state.clone()))
         .merge(oauth::routes(state))

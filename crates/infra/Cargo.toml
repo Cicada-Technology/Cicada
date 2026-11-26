@@ -26,6 +26,7 @@ tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
 governor = { workspace = true }
 tokio = { workspace = true }
+dotenvy = "0.15"
 
 [dev-dependencies]
 tokio = { workspace = true }

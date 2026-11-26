@@ -28,7 +28,7 @@ const JWT_SECRET: &str = "test-secret";
 
 fn url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://cicada:2025%40hanmole@localhost:5432/cicada".to_string())
+        .unwrap_or_else(|_| "postgres://cicada:2026%40cicada@localhost:5432/cicada".to_string())
 }
 
 async fn connect(schema: Option<&str>) -> DatabaseConnection {
@@ -49,6 +49,7 @@ fn provider() -> OAuthProviderConfig {
         token_url: "https://idp.example/token".to_string(),
         userinfo_url: "https://idp.example/userinfo".to_string(),
         redirect_uri: "https://api.example/auth/login/keycloak/callback".to_string(),
+        native_redirect_uri: "cicada://oauth/callback".to_string(),
         scopes: Vec::new(),
         identity_type: None,
     }
@@ -200,9 +201,18 @@ async fn json_body(resp: axum::response::Response) -> serde_json::Value {
 
 /// 取一次授权地址与 state。
 async fn authorize(app: &axum::Router) -> (String, String) {
+    authorize_with(app, "").await
+}
+
+async fn authorize_with(app: &axum::Router, query: &str) -> (String, String) {
     let resp = app
         .clone()
-        .oneshot(req("GET", "/auth/login/keycloak/authorize-url", "", None))
+        .oneshot(req(
+            "GET",
+            &format!("/auth/login/keycloak/authorize-url{query}"),
+            "",
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -398,6 +408,54 @@ async fn oauth_ticket_is_bound_to_the_signing_tenant() {
         .await
         .unwrap();
     assert_eq!(forged.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL"]
+async fn oauth_native_uses_custom_scheme_redirect() {
+    let Fixture { state, client, .. } = setup("web_oauth_native").await;
+    let app = router(state);
+
+    // 原生客户端授权地址必须带配置的自定义 scheme（编码后）。
+    let (authorize_url, oauth_state) = authorize_with(&app, "?client=native").await;
+    assert!(
+        authorize_url.contains("redirect_uri=cicada%3A%2F%2Foauth%2Fcallback"),
+        "{authorize_url}"
+    );
+
+    // 回调声明 native：令牌交换必须使用同一条 redirect_uri。
+    let callback = app
+        .clone()
+        .oneshot(req(
+            "POST",
+            "/auth/login/keycloak/callback",
+            "",
+            Some(serde_json::json!({
+                "code": "code-alice",
+                "state": oauth_state,
+                "client": "native"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(callback.status(), StatusCode::OK);
+    assert_eq!(
+        client.redirects(),
+        vec!["cicada://oauth/callback".to_string()]
+    );
+
+    // 未知客户端类型 → 422，不静默回落到 web。
+    let invalid = app
+        .clone()
+        .oneshot(req(
+            "GET",
+            "/auth/login/keycloak/authorize-url?client=android",
+            "",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[test]
